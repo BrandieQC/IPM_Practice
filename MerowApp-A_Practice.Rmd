@@ -1,0 +1,538 @@
+---
+title: "Merow et al IPM Practice"
+output: html_notebook
+---
+
+## Github link w/ data csv files
+https://github.com/cmerow/teachIPMs/blob/master/2_Beginner/Intro_to_IPMs/Exercises/Intro_to_IPMs_Exercises.r 
+
+```{r}
+library(tidyverse)
+library(nlme)
+library(fields) #for imagePlot
+library(IPMpack) #no longer maintained 
+library(patchwork) #can combine different figures - syntax may be easier than cowplot 
+#downloaded from archive https://cran.r-project.org/package=IPMpack
+
+data(dataIPMpackHypericumCov)
+```
+
+
+# Chapter 1 - Appendix A 
+## Simple IPM for long-lived perennial plant 
+
+### Read in the data
+```{r}
+d <- read.csv("data/Intro_to_IPMs_Exercises_Data.csv")
+head(d) #adults at head of data frame
+tail(d) #recruits observed in second year at tail
+#make sure to use NAs appropriately (e.g. if an individual dies (0), it can't have a size the next year --> sizeNext=NA)
+```
+
+### Plots for data exploration
+```{r}
+par(mfrow=c(2,2), mar=c(4,4,2,1))
+plot(d$size, jitter(d$surv), xlab="Size (t)", ylab = "Survival to t+1") #survival
+plot(d$size,d$sizeNext,xlab="Size (t)",ylab="Size (t+1)") #growth
+plot(d$size,d$fec.seed,xlab="Size (t)",ylab="Seed Number") #number of seeds
+hist(d$sizeNext[is.na(d$size)],main=,xlab="Recruit Size") #recruit size
+```
+
+### GGPlot versions of above plots
+```{r}
+d %>% 
+  ggplot(aes(x=size, surv)) +
+  geom_jitter(width = 0, height=0.25) + #width would jitter on the x axis which would manipulate the data for size 
+  labs(y="Survival to t+1", x="Size (t)")
+
+d %>% 
+  ggplot(aes(x=size, y=sizeNext)) +
+  geom_point() +
+  labs(x="Size (t)", y="Size (t+1)")
+
+d %>% 
+  ggplot(aes(x=size, y=fec.seed)) +
+  geom_point() +
+  labs(x="Size (t)", y="Seed Number")
+
+d %>% 
+  filter(is.na(size)) %>% 
+  ggplot(aes(x=sizeNext)) +
+  geom_histogram(aes(y=after_stat(density)), bins = 15, color="gray") + #have to get density for the y axis instead of counts 
+  labs(x="Recruit Size", y="Density")
+
+#can use patchwork to get all of the above on the same frame
+```
+
+
+### Build regressions for vital functions
+```{r}
+#create a data frame to hold the model parameters
+params = data.frame(
+  surv.int=NA, #intercept from log reg of surv
+  surv.slope=NA, #slope from log reg of surv
+  growth.int=NA, # Intercept from linear regression of growth
+  growth.slope=NA, # Slope from linear regression of growth
+  growth.sd=NA, # Residual sd from the linear regression of growth
+  seed.int=NA, # Intercept from Poisson regression of seed number
+  seed.slope=NA, # Slope from Poisson regression of seed number
+  recruit.size.mean=NA, # Mean recruit size
+  recruit.size.sd=NA, # Standard deviation of recruit size
+  establishment.prob=NA # Probability of establishment
+)
+
+# params2 = tibble(surv.int=NA, surv.slope=NA) #EX of how to do with tidyverse 
+```
+
+```{r}
+#survival: log reg
+surv.reg=glm(surv~size, data=d, family = binomial())
+summary(surv.reg)
+coefficients(surv.reg)[1]
+params$surv.int = coefficients(surv.reg)[1] #saving the parameters
+params$surv.slope = coefficients(surv.reg)[2]
+```
+
+```{r}
+#growth: linear regression
+growth.reg=lm(sizeNext~size, data=d)
+summary(growth.reg)
+params$growth.int=coefficients(growth.reg)[1]
+params$growth.slope=coefficients(growth.reg)[2]
+params$growth.sd=sd(resid(growth.reg)) ##* why did they get this from the residuals? - Unexplained deviation in size (standard deviation of the things we can't predict to make sure those values are included in the potential range of values in the next generation)
+ggplot(d, aes(y = sizeNext, x = size))+
+  geom_point()+
+  geom_smooth(method = "lm")
+```
+
+```{r}
+#Fecundity (# of seeds): poisson regression
+#Note this includes individuals that did not reproduce
+#Poisson regression assumes the response variable Y has a Poisson distribution, and assumes the logarithm of its expected value can be modeled by a linear combination of unknown parameters. A Poisson regression model is sometimes known as a log-linear model, especially when used to model contingency tables.
+seeds.reg=glm(fec.seed~size, data=d, family = poisson()) #alternative distribution would be negative binomial
+#poisson is a special case of negative binomial and it has more restrictions than negative binomial 
+summary(seeds.reg)
+params$seed.int=coefficients(seeds.reg)[1]
+params$seed.slope=coefficients(seeds.reg)[2]
+```
+
+```{r}
+#size distribution of recruits
+params$recruit.size.mean=mean(d$sizeNext[is.na(d$size)]) #recruits are the ones that only have sizeNext
+params$recruit.size.sd=sd(d$sizeNext[is.na(d$size)])
+
+#We assume that oﬀspring size is independent of maternal size so we only need to describe the distribution of oﬀspring sizes in terms of its mean and variance.
+```
+
+```{r}
+#establishment prob.
+#ignores all processes that might lead to seed loss
+params$establishment.prob=sum(is.na(d$size))/sum(d$fec.seed,na.rm=TRUE) #recruits in t+1/seeds produced in t
+```
+
+```{r}
+#Check the fit of the above models with the data
+#Model selection is really the most important step in building an IPM because all inference derives from the quality of these regressions.
+par(mfrow=c(2,2),mar=c(4,4,2,1))
+xx=seq(0,8,by=.01)
+plot(d$size,d$sizeNext,main='Growth/Shrinkage/Stasis')	
+	lines(xx,predict(growth.reg,data.frame(size=xx)),col='red',lwd=3)
+plot(d$size,jitter(d$surv),main='Survival') # jittered to see easier
+	lines(xx,predict(surv.reg,data.frame(size=xx),type='response'), col='red',lwd=3) #type = response instructs the predict function to backtransform the data to the response scale 
+plot(d$size,d$fec.seed,main='Seeds') # jittered to see easier
+	lines(xx,predict(seeds.reg,data.frame(size=xx),type='response'), col='red',lwd=3)
+hist(d$sizeNext[is.na(d$size)],main='Size of Recruits',freq=FALSE)
+	lines(xx,dnorm(xx,params$recruit.size.mean,params$recruit.size.sd), col='red',lwd=3)
+```
+*How would we make the above figures in ggplot? - see Julin's code 
+~ = shorthand for function(.x){} - Creating a new function on a fly 
+dnorm will give you the probablity of a certain size given the mean and sd of the data 
+
+### Define functions to describe life history
+- one function per vital rate
+- functions used to build the IPM using the saved parameters
+- in practice you would figure out what vital rates and functions you want first and then build the regressions
+- then it would be an iterative process
+```{r}
+# 1. survival probability function
+s.x=function(x,params) {
+u=exp(params$surv.int+params$surv.slope*x) #exp as first step to reverse the log 
+return(u/(1+u)) #back transform from logit
+}
+
+# 2. growth function
+g.yx=function(xp,x,params) { #xp = all t+1 size values we want to predict 
+dnorm(xp,mean=params$growth.int+params$growth.slope*x,sd=params$growth.sd) #need to give dnorm a mean and sd (linear model, normal distribution)
+} 
+
+# 3. reproduction function
+f.yx=function(xp,x,params) { #expected offspring 
+  params$establishment.prob* #prob of seed establishing 
+    dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)* #distribution of new plant sizes
+    exp(params$seed.int+params$seed.slope*x) #fecundity, exp to backtransform poisson 
+}
+```
+
+### Make a Kernel
+- combine the functions to build the IPM matrix 
+```{r}
+#To integrate, we begin by defining the boundary points (b; the edges of the cells defining the matrix), mesh points (y; the centers of the cells defining the matrix and the points at which the matrix is evaluated for the midpoint rule of numerical integration), and step size (h; the widths of the cells). The integration limits (min.size and max.size) span the range of sizes observed in the data set, and then some.
+min.size=.9*min(c(d$size,d$sizeNext),na.rm=T) #integration limits - 90% of the smallest
+max.size=1.1*max(c(d$size,d$sizeNext),na.rm=T) #integration limits - 110% of the largest 
+n=100 # number of cells in the matrix - some discussion at the end of the Merow et al paper - also in Doak et al paper - typically between 50 and 200 - test within those ranges - don't want to average over peaks and valleys 
+b=min.size+c(0:n)*(max.size-min.size)/n # boundary points of cells
+y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points at midpoint of cells defined by b 
+h=y[2]-y[1] # step size
+```
+
+```{r}
+#Make the IPM matrices: The function outer() evaluates the matrix at all pairwise combinations of the two vectors y and y and returns matrices representing the kernel components for growth and fecundity, respectively. For the numerical integration, we're using the midpoint rule (the simplest option) estimate the area under a curve. The midpoint rule assumes a rectangular approximation. The heights of the rectangles are given by the outer function and the width of the rectangles is h.
+G=h*outer(y,y,g.yx,params=params) # growth matrix 
+#h*outer b/c want the values across the width? maybe b/c step size is so small
+S=s.x(y,params=params) # survival at each size midpoint defined in previous code chunk 
+F=h*outer(y,y,f.yx,params=params) # reproduction matrix
+P=G # placeholder; redefine P on the next line
+for(i in 1:n) P[,i]=G[,i]*S[i] # growth/survival matrix COLUMN X IN G * CELL X IN S
+K=P+F # full matrix (100 x 100 cell discretization of the kernel)
+```
+
+### Basic Analysis (use the tools for matrix projection models)
+```{r}
+(lam <- Re(eigen(K)$values[1])) #asymp. pop growth rate (dominant eigenvalue)
+w.eigen <- Re(eigen(K)$vectors[,1]) #right eigenvector
+stable.dist <- w.eigen/sum(w.eigen)
+v.eigen <- Re(eigen(t(K))$vectors[,1]) #left eigenvector 
+repro.val <- v.eigen/v.eigen[1]
+```
+
+```{r}
+#combine eigens to get sensitivity and elasticity matrices
+v.dot.w=sum(stable.dist*repro.val)*h
+sens=outer(repro.val,stable.dist)/v.dot.w
+elas=matrix(as.vector(sens)*as.vector(K)/lam,nrow=n)
+```
+
+```{r}
+#plot results (stable size distribution, reproductive values, elasticity, sensitivity).
+par(mfrow=c(2,3)) 
+image(y,y,t(K), xlab="Size (t)",ylab="Size (t+1)",col=topo.colors(100), main="Kernel")
+contour(y,y,t(K), add = TRUE, drawlabels = TRUE)
+plot(y,stable.dist,xlab="Size",type="l",main="Stable size distribution")
+plot(y,repro.val,xlab="Size",type="l",main="Reproductive values") 
+image(y,y,t(elas),xlab="Size (t)",ylab="Size (t+1)",main="Elasticity")
+image(y,y,t(sens),xlab="Size (t)",ylab="Size (t+1)", main="Sensitivity")
+```
+
+# Improving the Model
+
+## 1. Make the variance of the growth regression a function of size and obtain the value of lambda
+(growth more variable in large individuals)
+```{r}
+#plot the absolute value of the residuals of the growth regression against size.
+plot(growth.reg$model$size, abs(resid(growth.reg))) #variance increases as a function of size
+#remember: residuals = difference between actual value and value estimated/predicted by the model 
+```
+
+### Incorporating nonuniform variance in the size distribution requires four steps:
+```{r}
+#(A) Build a regression on the residuals of the growth regression as a function of size.
+growth.reg2=gls(sizeNext~size,weights=varExp(),na.action=na.omit, data=d)
+summary(growth.reg2)
+
+plot.new()
+plot(d$size,d$sizeNext,main="Growth/Shrinkage/Stasis")
+  lines(xx,predict(growth.reg2,data.frame(size=xx)),col="red",lwd=3)
+```
+
+```{r}
+#(B) Modify the params data frame (where we store all the coeficients used to build the IPM)
+params$growth.int=coefficients(growth.reg2)[1]
+params$growth.slope=coefficients(growth.reg2)[2]
+params$growth.sigma2=summary(growth.reg2)$sigma^2
+params$growth.sigma2.exp=as.numeric(growth.reg2$modelStruct$varStruct)
+```
+
+```{r}
+#(C) Modify the growth function, g.xy(), to allow the standard deviation argument, sd, to be a function of size.
+g.yx=function(xp,x,params) {
+dnorm(xp,mean=params$growth.int+params$growth.slope*x,
+sd=sqrt(params$growth.sigma2*exp(2*params$growth.sigma2.exp*x)))
+}
+```
+
+```{r}
+#{D) Make and Analyze the kernel 
+G=h*outer(y,y,g.yx,params=params) # growth matrix
+S=s.x(y,params=params) # survival
+P=G # placeholder; redefine P on the next line
+for(i in 1:n) P[,i]=G[,i]*S[i] # growth/survival matrix
+F=h*outer(y,y,f.yx,params=params) # reproduction matrix
+K=P+F # full matrix
+(lam=Re(eigen(K)$values[1])) # new population growth rate
+
+w.eigen=Re(eigen(K)$vectors[,1])
+stable.dist=w.eigen/sum(w.eigen)
+v.eigen=Re(eigen(t(K))$vectors[,1])
+repro.val=v.eigen/v.eigen[1]
+v.dot.w=sum(stable.dist*repro.val)*h
+sens=outer(repro.val,stable.dist)/v.dot.w
+elas=matrix(as.vector(sens)*as.vector(K)/lam,nrow=n)
+```
+
+```{r}
+#plot the results
+par(mfrow=c(2,3),mar=c(4,5,2,2))
+image.plot(y,y,t(K), xlab="Size (t)",ylab="Size (t+1)",
+col=topo.colors(100), main="IPM matrix")
+contour(y,y,t(K), add = TRUE, drawlabels = TRUE)
+plot(y,stable.dist,xlab="Size",type="l",main="Stable size distribution")
+plot(y,repro.val,xlab="Size",type="l",main="Reproductive values")
+image.plot(y,y,t(elas),xlab="Size (t)",ylab="Size (t+1)",main="Elasticity")
+image.plot(y,y,t(sens),xlab="Size (t)",ylab="Size (t+1)", main="Sensitivity")
+```
+
+
+### Checking for Eviction
+Because of how we’ve defined the model, most of that probability for both functions falls between the minimum and maximum values of size that we’ve chosen for the model (0.45 and 9.735, respectively), but not all of it. If we ignore the parts of these densities that fall outside the integration limits, individuals are ’evicted from the model’ and survival is incorrectly estimated (Williams et al. 2012).
+```{r}
+#To check for eviction, we plot the survival model and the column sums of the survival/growth (P) matrix. 
+plot(y,s.x(y,params), #fitted survival model 
+     xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(P,2,sum),col="red",lwd=3,cex=.1,pch=19) # column sums 
+#we see that the eviction occurs only for large individuals (size >9) because the column sums are lower than the survival models suggests that they should be.
+###BQC: are column sums just the # of indivs in each size class that we expect based on the model??*
+     #Nov 2024: column sums = overall surv prob for a given size class (despite what size it changed to?)
+```
+
+```{r}
+#one way to correct for eviction is to assign all really small indivs to same size class and all really big indivs to same size class
+G=h*outer(y,y,g.yx,params=params) # growth matrix
+ S=s.x(y,params=params)
+ P=G
+   # fix eviction of offspring
+ for(i in 1:(n/2)) { #All indivs smaller than the lower integration limit are assigned to the smallest size class.
+    G[1,i]<-G[1,i]+1-sum(G[,i]) 
+    P[,i]<-G[,i]*S[i]
+  }
+   # fix eviction of large adults
+ for(i in (n/2+1):n) { # all indivs larger than the upper integration limit are assigned to the largest size class 
+    G[n,i]<-G[n,i]+1-sum(G[,i]) 
+    P[,i]<-G[,i]*S[i]
+  }
+ F=h*outer(y,y,f.yx,params=params) # reproduction matrix
+ K=P+F                             # full matrix
+ (lam=Re(eigen(K)$values[1]))      # new population growth rate, went up slightly
+ 
+ plot(y,s.x(y,params),xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(P,2,sum),col="red",lwd=3,cex=.1,pch=19) # solution worked
+```
+
+
+## 2. Quadratic Growth Function 
+The next improvement to the IPM is to add a quadratic term to the growth regression to capture the slight downward curving pattern in growth (Fig. 1.2). To tell the growth regression to use a quadratic term, use I(size ˆ2) as a predictor variable.
+```{r}
+growth.reg=gls(sizeNext~size+I(size^2), weights=varExp(), na.action = na.omit, data=d)
+summary(growth.reg)
+```
+
+Rerun the variance regressions since the residuals change with the addition of the quadratic term 
+```{r}
+params$growth.int=coefficients(growth.reg2)[1]
+params$growth.slope=coefficients(growth.reg2)[2]
+params$growth.sigma2=summary(growth.reg2)$sigma^2
+params$growth.sigma2.exp=as.numeric(growth.reg2$modelStruct$varStruct)
+
+params$growth.int=coefficients(growth.reg)[1] 
+params$growth.slope=coefficients(growth.reg)[2]
+params$growth.sqrd=coefficients(growth.reg)[3]
+params$growth.sigma2=summary(growth.reg)$sigma^2
+params$growth.sigma2.exp=as.numeric(growth.reg$modelStruct$varStruct) 
+
+g.yx=function(xp,x,params) {
+dnorm(xp, mean=params$growth.int+params$growth.slope*x+params$growth.sqrd*x^2, sd=sqrt(params$growth.sigma2*exp(2*params$growth.sigma2.exp*x)))
+}
+```
+
+Build the model again
+```{r}
+G=h*outer(y,y,g.yx,params=params) # growth matrix
+# survival
+# placeholder; redefine P on the next line
+ S=s.x(y,params=params)
+ P=G
+   # fix eviction of offspring
+ for(i in 1:(n/2)) {
+    G[1,i]<-G[1,i]+1-sum(G[,i])
+    P[,i]<-G[,i]*S[i]
+  }
+   # fix eviction of large adults
+ for(i in (n/2+1):n) {
+    G[n,i]<-G[n,i]+1-sum(G[,i])
+    P[,i]<-G[,i]*S[i]
+  }
+ #for(i in 1:n) P[,i]=G[,i]*S[i]
+ F=h*outer(y,y,f.yx,params=params) # reproduction matrix
+ K=P+F                             # full matrix
+ 
+ (lam=Re(eigen(K)$values[1]))      # new population growth rate
+ 
+ w.eigen=Re(eigen(K)$vectors[,1])
+ stable.dist=w.eigen/sum(w.eigen)
+ v.eigen=Re(eigen(t(K))$vectors[,1])
+ repro.val=v.eigen/v.eigen[1]
+ v.dot.w=sum(stable.dist*repro.val)*h
+ sens=outer(repro.val,stable.dist)/v.dot.w
+ elas=matrix(as.vector(sens)*as.vector(K)/lam,nrow=n)
+
+```
+
+```{r}
+#plot the results
+par(mfrow=c(2,3),mar=c(4,5,2,2))
+image.plot(y,y,t(K), xlab="Size (t)",ylab="Size (t+1)",
+col=topo.colors(100), main="IPM matrix")
+contour(y,y,t(K), add = TRUE, drawlabels = TRUE)
+plot(y,stable.dist,xlab="Size",type="l",main="Stable size distribution")
+plot(y,repro.val,xlab="Size",type="l",main="Reproductive values")
+image.plot(y,y,t(elas),xlab="Size (t)",ylab="Size (t+1)",main="Elasticity")
+image.plot(y,y,t(sens),xlab="Size (t)",ylab="Size (t+1)", main="Sensitivity")
+```
+
+## 3. Flowering Probability 
+The final improvement to the IPM is to incorporate a model for flowering probability. There are two issues in play here. One is that we know the biology and expect larger individuals to flower more. The other is that the data don’t support the form of the original model. More generally, it is not a good idea to combine multiple processes into a single function, as this makes it hard to model the data. 
+
+### A) write the flowering probability function (modeled as logistic regression so function looks like survival) 
+```{r}
+p.flower.x=function(x,params) {
+              u=exp(params$flower.int+params$flower.slope*x)
+              return(u/(1+u))
+}
+```
+
+
+### B) modify the reproduction function to includethe flowering prob function #multiply b/c in order to make fruits, you need to flower first
+```{r}
+f.yx=function(xp,x,params) {
+        p.flower.x(x,params)*
+              params$establishment.prob*
+              dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)*
+              exp(params$seed.int+params$seed.slope*x)
+}
+```
+
+### C) fit a log reg for flowering prob. and save params
+```{r}
+flower.reg=glm(fec.flower~size,data=d,family=binomial())
+summary(flower.reg)
+
+params$flower.int=coefficients(flower.reg)[1]
+params$flower.slope=coefficients(flower.reg)[2]
+``` 
+
+### D) update the regression for seed number to include only indivs that flowered (flower==1)
+```{r}
+seed.reg=glm(fec.seed~size,data=d[d$fec.flower==1,],family=poisson()) 
+summary(seed.reg)
+params$seed.int=coefficients(seed.reg)[1] 
+params$seed.slope=coefficients(seed.reg)[2]
+```
+
+### Run the model and obtain sensitivities and elasticities 
+```{r}
+G=h*outer(y,y,g.yx,params=params) # growth matrix
+ S=s.x(y,params=params)
+ P=G
+   # fix eviction of offspring
+ for(i in 1:(n/2)) {
+    G[1,i]<-G[1,i]+1-sum(G[,i])
+    P[,i]<-G[,i]*S[i]
+  }
+   # fix eviction of large adults
+ for(i in (n/2+1):n) {
+    G[n,i]<-G[n,i]+1-sum(G[,i])
+    P[,i]<-G[,i]*S[i]
+  }
+ # for(i in 1:n) P[,i]=G[,i]*S[i]
+ F=h*outer(y,y,f.yx,params=params) # reproduction matrix
+ K=P+F                             # full matrix
+ (lam=Re(eigen(K)$values[1]))      # new population growth rate (goes down)
+
+w.eigen=Re(eigen(K)$vectors[,1])
+stable.dist=w.eigen/sum(w.eigen)
+ v.eigen=Re(eigen(t(K))$vectors[,1])
+ repro.val=v.eigen/v.eigen[1]
+ v.dot.w=sum(stable.dist*repro.val)*h
+ sens=outer(repro.val,stable.dist)/v.dot.w
+ elas=matrix(as.vector(sens)*as.vector(K)/lam,nrow=n)
+```
+
+### Plot the results 
+```{r}
+par(mfrow=c(2,3),mar=c(4,5,2,2))
+imagePlot(y,y,t(K), xlab="Size (t)",ylab="Size (t+1)",
+col=topo.colors(100), main="IPM matrix")
+contour(y,y,t(K), add = TRUE, drawlabels = TRUE) 
+plot(y,stable.dist,xlab="Size",type="l",main="Stable size distribution") 
+plot(y,repro.val,xlab="Size",type="l",main="Reproductive values") 
+imagePlot(y,y,t(elas),xlab="Size (t)",ylab="Size (t+1)",main="Elasticity") 
+imagePlot(y,y,t(sens),xlab="Size (t)",ylab="Size (t+1)", main="Sensitivity") 
+plot(y,predict(flower.reg,newdata=data.frame(size=y),type="response"),
+   xlab="Size (t)", ylab="Flowering probability",type="l")
+```
+
+
+# Diagnositics
+use IPM pack to run diagnostics
+```{r}
+#Convert the matrix to IPMmatrix first
+Pmat = new("IPMmatrix", nDiscrete = 0, nEnvClass = 0,
+          nBigMatrix = n, nrow = n, ncol = n, meshpoints = y,
+          env.index = 0)
+ Pmat[, ] = P
+str(Pmat)
+```
+
+## Life Expectancy 
+```{r}
+(mle=meanLifeExpect(Pmat)) #life expectancy
+plot(y,meanLifeExpect(Pmat), xlab="Size (t)",ylab="Time") #seems to represent the species biology (makes sense for perennial plant)
+```
+
+## Check maximum size
+This illustrates why it can be valuable to compare the growth model to the 1:1 line: where the mean of the growth model intersects 1:1 sets the approximate asymptotic size on individuals (Section III.A in the main text).
+```{r}
+par(mfrow=c(2,1),mar=c(4,5,2,2))
+imagePlot(y,y,t(P), xlab="Size (t)",ylab="Size (t+1)",
+   col=topo.colors(100), main="IPM matrix")           #asymp. size is around 6
+contour(y,y,t(P), add = TRUE, drawlabels = TRUE)
+abline(0,1,lwd=3,lty=2)
+plot(density(d$sizeNext[!is.na(d$sizeNext)]),xlab="Size(t+1)",
+   main="Observed distribution of sizes")             #max size around 6 makes sense for this case 
+```
+
+## Transient dynamics 
+Transient dynamics can be important if the population size structure is not near the stable size distribution. If interest lies in short term projections, considering transient dynamics may be particularly important for accurate predictions.
+```{r}
+ (lam=Re(eigen(K)$values[1]))      # asymptotic growth rate (0.9765733)
+(damp=Re(eigen(K)$values[1])/Re(eigen(K)$values[2])) # damping ratio
+#The time scale for reaching the steady state can be estimated from the damping ratio (Caswell 2001, p. 95): the ratio of the dominant eigenvalue to the second largest one. Small values (near 1) mean slow transients; higher values means the dominant eigenvalue dictates the dynamics.
+
+initial.pop=runif(100)  #random starting population structure
+ initial.pop=initial.pop/sum(initial.pop)
+ nyears=20
+ size.dist=matrix(NA,n,nyears)
+ lambda=rep(NA,nyears)
+ xold=initial.pop
+ for(i in 1:nyears){
+          xnew=K%*%xold
+    lambda[i]=sum(xnew)/sum(xold)
+          size.dist[,i]=xnew
+    xold=xnew
+ }
+ 
+ lambda #doesn't take too long (about 4-5 years) to get close to the asymp. growth rate (transient dynamics only matter when interested in below 4 years)
+ (mean.lam=exp(mean(log(lambda)))) #this would be the mean lambda during transient period
+ 
+```
