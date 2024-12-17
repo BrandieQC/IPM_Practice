@@ -1,0 +1,926 @@
+---
+title: "Merow_AppC_TwoWays"
+author: "Brandie QC"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Appendix C - IPMs for Complex Life Cycles
+
+```{r}
+library(tidyverse)
+library(broom)
+library(patchwork)
+library(ggbeeswarm)
+library(magrittr)
+library(nlme)
+library(IPMpack)
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+```
+
+## Data
+```{r}
+data(dataIPMpackHypericumCov)
+d <- dataIPMpackHypericumCov
+```
+
+```{r}
+help(dataIPMpackHypericumCov)
+head(d)
+```
+
+```{r}
+d1 <- subset(d,is.na(d$size)==FALSE | d$ontogenyNext==1)
+#SUBSET TO ONLY PLANTS THAT HAD A SIZE AT TIME T OR NEW RECRUITS
+```
+
+```{r}
+d1 <- subset(d1,d1$year==1994 | d1$year==1996)
+#RANDOM SUBSET OF THE DATA USED IN APPENDIX 
+```
+
+## Constants
+```{r}
+fec2 <- 13.78 #Number of seeds produced per fruit
+
+fec3 <- 0.001336 #Probability of germination within the year of seed production
+
+fec4 <- 0.14 #Probability of seedling survival from the time of germination to the time of the next annual census t+1, corresponding to approximately 6 months
+
+goSB <- 0.08234528 #Probability of a seed entering the seed bank
+
+staySB <- 0.671 #Probability of a seed staying in the seed bank
+```
+
+Reorganize the data
+```{r, eval=FALSE}
+d1 <- d1[,c("year","size","surv","sizeNext","fec0","fec1")]
+head(d1)
+tail(d1)
+```
+
+### Alternative with dplyr 
+```{r}
+d1 <- d1 %>% select(year, size, surv, sizeNext, fec0, fec1)
+```
+
+
+## Specify which transitions and contributions are made to the continuous stage vs. in and out of discrete stages 
+
+The following lines of code set the variable stage (maximum height of individuals of Hypericum) as
+continuous in the IPM.
+```{r, eval=FALSE}
+d1$stageNext <- d1$stage <- "continuous"
+d1$stage[is.na(d1$size)] <- NA
+d1$stageNext[d1$surv==0] <- "dead"
+head(d1)
+```
+
+Next we specify the number of individuals changing from a specific size at time t to another
+(or the same) value at time t+1.
+```{r, eval=FALSE}
+d1$number <- 1
+head(d1)
+```
+
+### Alternative for both above code chunks with dplyr
+```{r}
+d1 <- d1 %>% 
+  mutate(stage=if_else(is.na(size), NA, "continuous"), 
+         stageNext=if_else(is.na(sizeNext), "dead", #all plants without a next size had surv==0, but some indivs with surv=0 were new recruits at sizenext 
+                           "continuous"),
+         number=1)
+head(d1)
+```
+
+
+Next we specify the transitions within and among the continuous and discrete stages - transitions
+from the continuous stage to the discrete stage, transitions within the discrete stage, and transitions
+from the discrete stage to the continuous stage.
+
+Here is where the variable number in d1 comes in handy: there will be hundreds of transitions from the discrete stage to the discrete stage, and it would be rather burdensome to store a row in the data frame for each seed. The variable d1$number will indicate how many individuals are making each type of transition; IPMpack will automatically read those numbers and consider them in the growth and fecundity objects (below).
+*I'm still a bit confused about this 
+```{r}
+seedbank <- data.frame(year="All",size=NA,surv=1, 
+                       #dplyr alternaitive = tibble 
+                  sizeNext=NA,fec0=NA,fec1=NA,
+                  stage=c("seedbank","seedbank","continuous"),
+                  stageNext=c("seedbank","continuous","seedbank"),
+                  number=c(staySB,(1-staySB)*fec3*fec4,1))
+
+seedbank
+#*if the last row is for plants that produced seeds that entered the seedbank why is goSB not involved and why is the number 1??
+```
+
+Combine data for continuous and discrete parts
+```{r}
+d1 <- rbind(d1,seedbank) #bind_rows = dplyr alternative 
+head(d1)
+tail(d1)
+```
+
+Make the stage variables factors
+```{r}
+d1$stage <- as.factor(d1$stage)
+d1$stageNext <- as.factor(d1$stageNext)
+```
+
+## Analysis 
+
+Start wtih 94-95 transition 
+```{r}
+d94 <- subset(d1, d1$year == "1994" | d1$year == "All") #1994 data for plants above ground and seedbank data for seeds below ground 
+```
+
+Make a dummy size axis with a certain range 
+```{r}
+minSize<-min(d1$size,na.rm=T)
+maxSize<-max(d1$size,na.rm=T)
+x<-seq(from=minSize,to=maxSize,length=1001)
+x0<-data.frame(size=x,size2=x^2,size3=x^3) # for later use
+```
+
+### Surv and growth kernel
+
+### Merow Surv models 
+Model exploration - Surv
+```{r}
+survModelComp(dataf = d94[!is.na(d$size),],
+              expVars = c(surv~1, surv~size, surv~size + size2,
+                          surv~size + size2 + size3),
+              makePlot = TRUE, legendPos = "bottomleft", 
+              mainTitle = "Survival")
+#survModelComp = IPMPACK function to test different surv ~ size models 
+```
+
+Model selection - Surv
+```{r}
+so94 <- makeSurvObj(d94, surv~size+I(size^2)) #quadratic term best describes the phenomenon of larger indivs dying more 
+```
+
+### BQC Version - Surv
+```{r}
+#create dataframe to bind predictions to, this will be used for all model fitting 
+newdata = tibble(size=seq(min(d94$size, na.rm = TRUE),
+                          max(d94$size, na.rm = TRUE),
+                          length.out=1001))
+#head(newdata)
+#tail(newdata)
+```
+
+```{r}
+surv.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"), #names of the different models
+                      f = c("surv ~ 1", 
+                            "surv ~ size", 
+                            "surv ~ size + I(size^2)", 
+                            "surv ~ size + I(size^2) + I(size^3)")) #model functions
+
+#run the models 
+surv.models <- surv.models %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), 
+                            data = d94, family = "binomial")), #run the models 
+         predict = map(glm, ~ cbind(newdata, surv=predict(., newdata, type = "response"))), #put predictions generated from the models into the "newdata" dataframe 
+         #type = response is for glm models, back transforms probabilites from logit scale 
+         glance = map(glm, glance)) #glance at the model results
+
+surv.models %>% unnest(glance) #look at the model fitting info 
+#AIC is very similar between models 
+#Choose quadratic to match Merow
+```
+
+Plot the fits 
+```{r}
+#make a dataframe for just the predictions:
+surv.predictions <- surv.models %>% 
+  select(name, predict) %>% 
+  unnest(predict)
+
+d94 %>% filter(!is.na(surv)) %>%
+  ggplot(aes(x=size, y =surv)) + #actual data
+  geom_point() +
+  #geom_smooth() + 
+  geom_line(aes(color=name), data = surv.predictions) + #add in prediction lines 
+  scale_color_viridis_d(end = 0.9)
+```
+
+### Merow growth models 
+Model exploration - growth 
+```{r}
+growthModelComp(dataf = d94, expVars = c(sizeNext~1, sizeNext~size,
+sizeNext~size + size2, sizeNext~size + size2 + size3), makePlot = TRUE,
+legendPos = "bottomright", mainTitle = "Growth")
+abline(a = 0, b = 1, lty= 2, col = "gray", lwd=2)
+```
+
+Model selection - growth 
+```{r}
+go94 <- makeGrowthObj(d94, sizeNext~size) #linear model makes since for biology and AIC 
+```
+
+### BQC Version - Growth 
+```{r}
+growth.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"), #names of the different models
+                      f = c("sizeNext ~ 1", 
+                            "sizeNext ~ size", 
+                            "sizeNext ~ size + I(size^2)", 
+                            "sizeNext ~ size + I(size^2) + I(size^3)")) #model functions
+
+#run the models 
+growth.models <- growth.models %>%
+  mutate(lm = map(f, ~ lm(as.formula(.), data = d94)), #run models 
+         predict = map(lm, ~ cbind(newdata, sizeNext=predict(., newdata))), #put predictions generated from the models into the "newdata" dataframe 
+         glance = map(lm, glance)) #glance at the model results
+
+growth.models %>% unnest(glance) #look at the model fitting info 
+#AIC is lowest for the linear model 
+```
+
+Plot the fits 
+```{r}
+#make a dataframe for just the predictions:
+growth.predictions <- growth.models %>% 
+  select(name, predict) %>% 
+  unnest(predict)
+
+d94 %>% filter(!is.na(sizeNext) & !is.na(size)) %>%
+  ggplot(aes(x=size, y =sizeNext)) + #actual data
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 5, color = "grey") + #compare to a line with slope of 1
+  geom_line(aes(color=name), data = growth.predictions) + #add in prediction lines 
+  scale_color_viridis_d(end = 0.9)
+#from the figure, it looks like the quadratic or cubic lines might follow the data better..
+```
+
+### Merow Build P matrix
+```{r}
+Pmatrix94 <- makeIPMPmatrix(survObj = so94, growObj = go94, minSize = minSize, maxSize = maxSize,
+nBigMatrix = 80, correction = "constant")
+
+require(fields)
+image.plot(Pmatrix94@meshpoints,
+Pmatrix94@meshpoints,
+t(Pmatrix94),
+main = "Pmatrix: survival and growth",
+xlab = "Size at t",
+ylab = "Size at t+1")
+abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
+```
+
+#### P matrix Diagnostics
+Check for eviction: Eviction at either end of the size range would --> lower estimated surv in P matrix compared to the survival object (OG data)
+```{r}
+diagnosticsPmatrix(Pmatrix94, growObj = go94, survObj = so94,
+correction = "constant")
+```
+
+### BQC Version - P Matrix 
+
+#### Make a dataframe to store the parameters (as in App A)
+```{r}
+params=data.frame(
+  surv.int=NA, # Intercept from logistic regression of survival
+  surv.slope1=NA, # Slope from logistic regression of survival
+  surv.slope2=NA, # Quadratic slope from logistic regression of survival
+  growth.int=NA, # Intercept from linear regression of growth
+  growth.slope=NA, # Slope from linear regression of growth
+  growth.sd=NA # Residual sd from the linear regression of growth
+)
+```
+
+#### Use broom:tidy to create a df with the coef from each model 
+```{r}
+surv.coefs <- surv.models %>% 
+  filter(name == "2_quadratic") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params$surv.int <- surv.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
+params$surv.slope1 <- surv.coefs %>% filter(term == "size") %>% pull(estimate)
+params$surv.slope2 <- surv.coefs %>% filter(term == "I(size^2)") %>% pull(estimate)
+```
+
+```{r}
+growth.coefs <- growth.models %>% 
+  filter(name == "1_linear") %>% 
+  mutate(coefs = map(lm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params$growth.int <- growth.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
+params$growth.slope <- growth.coefs %>% filter(term == "size") %>% pull(estimate)
+
+#Pull sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed sd of residuals.  
+params$growth.sd <- growth.models %>% filter(name == "1_linear") %>% unnest(glance) %>% pull(sigma)
+```
+
+#### Define the functions
+```{r}
+# 1. survival probability function
+##This is inverse logit.  Provides survival probability based on size.
+s.x=function(x,params) {
+  u=exp(params$surv.int + params$surv.slope1*x + params$surv.slope2*x^2)
+  return(u/(1+u)) 
+}
+
+# 2. growth function
+## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
+g.yx=function(xp,x,params) {
+  dnorm(xp,mean=params$growth.int+params$growth.slope*x,sd=params$growth.sd)
+}
+```
+
+#### Define the structure of the IPM
+```{r}
+# the sizes we are integrating over
+#min.size=.9*min(c(d94$size, d94$sizeNext),na.rm=T) #code from App A
+#max.size=1.1*max(c(d94$size, d94$sizeNext),na.rm=T) #code from App A
+minSize<-min(d1$size,na.rm=T) #same sizes that Merow uses in App C
+maxSize<-max(d1$size,na.rm=T) #same sizes that Merow uses in App C
+
+n=80 # dimensions of the matrix - same as App C, App A used 100
+
+b=min.size+c(0:n)*(max.size-min.size)/n # boundary points
+y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
+h=y[2]-y[1] # step size
+```
+
+#### Make the matrices (G, S, and P)
+```{r}
+G=h*outer(y,y,g.yx,params=params) # growth matrix
+
+S=s.x(y,params=params) # survival at each size midpoint
+
+P=G # placeholder; redefine P on the next line
+for(i in 1:n) P[,i]=G[,i]*S[i] # growth/survival matrix
+```
+
+#### Plot the matrix
+```{r}
+P %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Size and Growth") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+
+Check for eviction
+Comparison of predicted survival probability to observed values to test for unintentional eviction. The black line shows the fitted survival model. The red dot shows the column sums of the growth/survival matrix
+```{r}
+plot(y,s.x(y,params), #fitted survival model 
+     xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(P,2,sum),col="red",lwd=3,cex=.1,pch=19) # column sums 
+```
+Evidence for eviction of small plants?
+
+Eviction correction using a constant 
+```{r}
+Pc=G # placeholder; redefine P on the next line
+for(i in 1:n) Pc[,i]=G[,i]*S[i] # growth/survival matrix
+nvals <- colSums(Pc, na.rm = TRUE)
+Pc <- t((t(Pc)/nvals) * s.x(y, params=params))
+
+plot(y,s.x(y,params),xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(Pc,2,sum),col="red",lwd=3,cex=.1,pch=19) # solution worked
+```
+
+#### Plot the matrix with eviction corrected 
+```{r}
+Pc %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Size and Growth") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+## Fecundity Kernel
+
+### Merow Flowering Prob models 
+Model exploration - flowering prob
+```{r}
+fec0.0_94 <- makeFecObj(d94, Formula = fec0~1, Family = "binomial")
+fec0.1_94 <- makeFecObj(d94, Formula = fec0~size, Family = "binomial")
+fec0.2_94 <- makeFecObj(d94, Formula = fec0~size+size2, Family = "binomial")
+fec0.3_94 <- makeFecObj(d94, Formula = fec0~size+size2+size3, Family = "binomial")
+```
+
+Plot the models for model selection
+```{r}
+pfzTest <- tapply(d94$size, as.numeric(cut(d94$size, 21)), mean, na.rm = TRUE)
+psTest <- tapply(d94$fec0, as.numeric(cut(d94$fec0, 21)), mean, na.rm = TRUE)
+fs <- order(d94$size); fs.fec0 <- (d94$fec0)[fs]; fs.size <- (d94$size)[fs]
+pfz <- tapply(fs.size, as.numeric(cut(fs.size, 21)), mean, na.rm = TRUE)
+ps <- tapply(fs.fec0, as.numeric(cut(fs.size, 21)), mean, na.rm = TRUE)
+plot(as.numeric(pfz), as.numeric(ps), pch = 19, cex = 1, col = "black",
+ylim = c(0, 1), xlab = "size", ylab = "Proportion of reproductive individuals")
+y0 <- predict(fec0.0_94@fitFec[[1]], newdata = x0)
+y0 <- exp(y0)/(exp(y0)+1); lines(x, y0, col = 2)
+y0 <- predict(fec0.1_94@fitFec[[1]], newdata = x0)
+y0 <- exp(y0)/(exp(y0)+1); lines(x, y0, col = 3)
+y0 <- predict(fec0.2_94@fitFec[[1]], newdata = x0)
+y0 <- exp(y0)/(exp(y0)+1); lines(x, y0, col = 4)
+y0 <- predict(fec0.3_94@fitFec[[1]], newdata = x0)
+y0 <- exp(y0)/(exp(y0)+1); lines(x, y0, col = 5)
+legend("bottomright", legend = sprintf("%s: %s = %.1f",
+c("1","size","size+size2","size+size2+size3"), c("AIC"),
+c(AIC(fec0.0_94@fitFec[[1]]), AIC(fec0.1_94@fitFec[[1]]),
+AIC(fec0.2_94@fitFec[[1]]), AIC(fec0.3_94@fitFec[[1]]))),
+col = c(2:5), lty = 1, xjust = 1, bg = "white")
+```
+
+### BQC Version - Flowering Prob 
+```{r}
+fec0.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"), #names of the different models
+                      f = c("fec0 ~ 1", 
+                            "fec0 ~ size", 
+                            "fec0 ~ size + I(size^2)", 
+                            "fec0 ~ size + I(size^2) + I(size^3)")) #model functions
+
+#run the models 
+fec0.models <- fec0.models %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), 
+                            data = d94, family = "binomial")), #run the models 
+         predict = map(glm, ~ cbind(newdata, fec0=predict(., newdata, type = "response"))), #put predictions generated from the models into the "newdata" dataframe 
+         #type = response is for glm models, back transforms probabilites from logit scale 
+         glance = map(glm, glance)) #glance at the model results
+
+fec0.models %>% unnest(glance) #look at the model fitting info 
+#AIC is lowest for cubic model 
+```
+
+Plot the fits 
+```{r}
+#make a dataframe for just the predictions:
+fec0.predictions <- fec0.models %>% 
+  select(name, predict) %>% 
+  unnest(predict)
+
+d94 %>% filter(!is.na(fec0)) %>%
+  ggplot(aes(x=size, y =fec0)) + #actual data
+  geom_point() +
+  geom_line(aes(color=name), data = fec0.predictions) + #add in prediction lines 
+  scale_color_viridis_d(end = 0.9)
+```
+
+### Merow # Fruits models - Need to filter to fec0==1??
+Model exploration - number of fruits per plant 
+```{r}
+fec1.0_94 <- makeFecObj(d94, Formula = fec1~1, Family = "poisson")
+fec1.1_94 <- makeFecObj(d94, Formula = fec1~size, Family = "poisson")
+fec1.2_94 <- makeFecObj(d94, Formula = fec1~size+size2, Family = "poisson")
+fec1.3_94 <- makeFecObj(d94, Formula = fec1~size+size2+size3, Family = "poisson")
+```
+
+Plot the models for model selection
+```{r}
+fs.fec1 <- (d94$fec1)[fs]
+fs.size <- (d94$size)[fs]
+pfz <- tapply(fs.size, as.numeric(cut(fs.size, 21)), mean, na.rm = TRUE)
+ps <- tapply(fs.fec1, as.numeric(cut(fs.size, 21)), mean, na.rm = TRUE)
+plot(as.numeric(pfz), as.numeric(ps), pch = 19, cex = 1, col = "black",
+xlab = "size", ylab = "Number of fruits/individual")
+y0 <- predict(fec1.0_94@fitFec[[1]], newdata = x0)
+y0 <- exp(y0); lines(x, y0, col = 2)
+y0 <- predict(fec1.1_94@fitFec[[1]], newdata = x0)
+y0 <- exp(y0); lines(x, y0, col = 3)
+y0 <- predict(fec1.2_94@fitFec[[1]], newdata = x0)
+y0 <- exp(y0); lines(x, y0, col = 4)
+y0 <- predict(fec1.3_94@fitFec[[1]], newdata = x0)
+y0 <- exp(y0); lines(x, y0, col = 5)
+legend("topleft", legend = sprintf("%s: %s = %.1f",
+c("1","size","size+size2","size+size2+size3"), c("AIC"),
+c(AIC(fec1.0_94@fitFec[[1]]), AIC(fec1.1_94@fitFec[[1]]),
+AIC(fec1.2_94@fitFec[[1]]), AIC(fec1.3_94@fitFec[[1]]))),
+col = c(2:5), lty = 1, xjust = 1, bg = "white")
+```
+
+### BQC Version - Number Fruits/Plant - Need to filter to fec0==1??
+```{r}
+fec1.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"), #names of the different models
+                      f = c("fec1 ~ 1", 
+                            "fec1 ~ size", 
+                            "fec1 ~ size + I(size^2)", 
+                            "fec1 ~ size + I(size^2) + I(size^3)")) #model functions
+
+#run the models 
+fec1.models <- fec1.models %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), 
+                            data = d94, family = "poisson")), #run the models 
+         predict = map(glm, ~ cbind(newdata, fec1=predict(., newdata, type = "response"))), #put predictions generated from the models into the "newdata" dataframe 
+         #type = response is for glm models, back transforms probabilites from logit scale 
+         glance = map(glm, glance)) #glance at the model results
+
+fec1.models %>% unnest(glance) #look at the model fitting info 
+#AIC is lowest for cubic model 
+```
+
+Plot the fits 
+```{r}
+#make a dataframe for just the predictions:
+fec1.predictions <- fec1.models %>% 
+  select(name, predict) %>% 
+  unnest(predict)
+
+d94 %>% filter(!is.na(fec1)) %>%
+  ggplot(aes(x=size, y=fec1)) + #actual data
+  geom_point() +
+  geom_line(aes(color=name), data = fec1.predictions) + #add in prediction lines 
+  scale_color_viridis_d(end = 0.9)
+```
+
+### Merow make F kernel 
+Make the fecundity object
+```{r}
+fo94 <- makeFecObj(d94, Formula=c(fec0~size+size2+size3, fec1~size+size2+size3),
+                   Family=c("binomial", "poisson"),Transform=c("none", -1),
+                   meanOffspringSize=mean(d94[is.na(d1$size)==TRUE &is.na(d94$sizeNext)==FALSE,"sizeNext"]),
+                   sdOffspringSize=sd(d94[is.na(d1$size)==TRUE &is.na(d94$sizeNext)==FALSE,"sizeNext"]),
+                   fecConstants=data.frame(fec2=fec2,fec3=fec3,fec4=fec4),
+                   offspringSplitter=data.frame(seedbank=goSB,continuous=(1-goSB)),
+                   vitalRatesPerOffspringType=data.frame(seedbank=c(1,1,1,0,0),
+                                                         continuous=c(1,1,1,1,1),
+                                                         row.names=c("fec0","fec1","fec2","fec3","fec4")))
+```
+Warning: longer object length is not a multiple of shorter object length
+
+Zoom in on part of the code above that shows that  fec0, fec1 and fec3 aﬀect all propagules, whereas fec3 and fec4 only aﬀect seeds in the seed bank.
+```{r}
+vitalRatesPerOffspringType=data.frame(seedbank=c(1,1,1,0,0),
+continuous=c(1,1,1,1,1),
+row.names=c("fec0","fec1","fec2","fec3","fec4"))
+
+vitalRatesPerOffspringType
+```
+
+Create the F kernel based on the fecundity object
+```{r}
+Fmatrix94 <- makeIPMFmatrix(fecObj=fo94, minSize=minSize, maxSize=maxSize,
+nBigMatrix=80, correction="constant")
+```
+
+Plot the F kernel for the continuous stage
+```{r}
+require(fields)
+image.plot(Fmatrix94@meshpoints,
+Fmatrix94@meshpoints,
+t(Fmatrix94[2:maxSize,2:maxSize]),
+main = "Fmatrix: fecundity",
+xlab = "Size at t",
+ylab = "Size at t+1")
+```
+
+### BQC Version - F kernel  
+#### Make dataframe to save reproduction-related params
+```{r}
+#fec2 = #seeds produced per fruit - was included in fec.seed in Merrow App. A, added it as an extra param here 
+#fec3 = prob of germ, not incorporated in App A, added it as an extra param here 
+#fec4 = prob of seedling surv (est)
+
+params.rep = data.frame(
+  flower.int=NA, # Intercept from log reg of flowering prob 
+  flower.slope = NA, # Slope from log reg of flowering prob 
+  flower.slope3 = NA, # Cubic slope from log reg of flowering prob 
+  fruit.int=NA, # Intercept from Poisson regression of fruit number
+  fruit.slope=NA, # Slope from Poisson regression of fruit number
+  fruit.slope3=NA,# Cubic slope from Poisson regression of fruit number
+  seed.per.fruit=fec2, #seeds produced per fruit
+  germ.prob=fec3, #germ prob 
+  establishment.prob=fec4, # Probability of establishment
+  recruit.size.mean=NA, # Mean recruit size
+  recruit.size.sd=NA # Standard deviation of recruit size
+)
+
+```
+
+#### Extract the model params 
+```{r}
+fec0.coefs <- fec0.models %>% 
+  filter(name == "3_cubic") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params.rep$flower.int <- fec0.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
+params.rep$flower.slope <- fec0.coefs %>% filter(term == "size") %>% pull(estimate)
+params.rep$flower.slope3 <- fec0.coefs %>% filter(term == "I(size^3)") %>% pull(estimate)
+```
+
+```{r}
+fec1.coefs <- fec1.models %>% 
+  filter(name == "3_cubic") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params.rep$fruit.int <- fec1.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
+params.rep$fruit.slope <- fec1.coefs %>% filter(term == "size") %>% pull(estimate)
+params.rep$fruit.slope3 <- fec1.coefs %>% filter(term == "I(size^3)") %>% pull(estimate)
+```
+
+```{r}
+recruit_info <- d94 %>% filter(is.na(size)) %>% #recruits are the ones that only have sizeNext
+  filter(year==1994) %>%  #exclude the seedbank 
+  summarise(recruit.size.mean=mean(sizeNext),
+            recruit.size.sd=sd(sizeNext))
+
+#size distribution of recruits
+params.rep$recruit.size.mean=recruit_info$recruit.size.mean 
+params.rep$recruit.size.sd=recruit_info$recruit.size.sd
+
+#We assume that oﬀspring size is independent of maternal size so we only need to describe the distribution of oﬀspring sizes in terms of its mean and variance.
+```
+
+#### Define the functions
+```{r}
+# flowering prob. function 
+p.flower.x=function(x,params.rep) { #flowering prob. 
+              u=exp(params.rep$flower.int+params.rep$flower.slope*x+params.rep$flower.slope3*x^3)
+              return(u/(1+u)) #back transform from logit scale 
+}
+
+#reproduction function (with above prob. function incorporated)
+f.yx=function(xp,x,params.rep) {
+        p.flower.x(x,params.rep)* #have to flower first
+    exp(params.rep$fruit.int+params.rep$fruit.slope*x+params.rep$fruit.slope3*x^3)* #then produce a certain number of fruits 
+    params.rep$seed.per.fruit* #those fruits have a certain number of seeds 
+    params.rep$germ.prob* #those seeds have to germinate
+              params.rep$establishment.prob* #recruits have to surv post germ
+              dnorm(xp,mean=params.rep$recruit.size.mean,sd=params.rep$recruit.size.sd) #recruits grow to a certain size 
+}
+```
+
+#### Make the F matrix
+```{r}
+F=h*outer(y,y,f.yx,params=params.rep) # reproduction matrix
+```
+
+#### Plot the F matrix 
+```{r}
+F %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Size and Growth") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+**Clearly I did something wrong!!
+Get lots of NAs at bigger sizes!
+
+## Consider transitions in and out of the discrete stage 
+```{r}
+dto94 = new("discreteTrans") #this is different from the appendix b/c "makeDiscreteTrans" was not working"
+
+dummy94 <- as.matrix(fo94@offspringRel$coefficients[1])
+dimnames(dummy94) <- list(1,"seedbank")
+dto94@meanToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
+dummy94 <- as.matrix(fo94@sdOffspringSize)
+dimnames(dummy94) <- list(1,"seedbank")
+dto94@sdToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
+
+dto94@moveToDiscrete = glm(rep(0, 21) ~ 1, family = binomial) #this is different from the appendix b/c of the first issue above 
+dtrans = as.matrix(staySB + (1 - staySB)*fec3*fec4)
+dimnames(dtrans) = list("continuous","continuous")
+dto94@discreteTrans = dtrans
+```
+
+After having specified the transitions for the discrete stage, the seed bank, we can reconsider the P kernel, now including the discrete stage, with a single line:
+```{r}
+Pmatrix94 <- makeIPMPmatrix(growObj=go94, survObj=so94, discreteTrans=dto94,
+minSize=minSize, maxSize=maxSize, nBigMatrix=80,correction="constant")
+library(fields)
+image.plot(c(Pmatrix94@meshpoints), c(Pmatrix94@meshpoints),
+(t(Pmatrix94[1:80,1:80])), main = "Pmatrix: survival/growth",
+xlab = "Size at t", ylab = "Size at t+1")
+abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
+```
+
+### BQC Version - Consider the discrete stage 
+```{r}
+
+```
+
+## Create the IPM by combining the P and F kernels
+
+Merow:
+```{r}
+IPM94 <- Pmatrix94 + Fmatrix94
+```
+
+BQC: Will get an error for this until fix the NAs in the F matrix 
+```{r}
+K=P+F                             # full matrix
+(lam=Re(eigen(K)$values[1]))      # population growth rate
+```
+
+
+## Create the IPM for 96-97
+```{r}
+d96 <- subset(d1, d1$year == "1996" | d1$year == "All")
+
+so96 <- makeSurvObj(d96, surv~size + size2)
+
+go96 <- makeGrowthObj(d96, sizeNext~size)
+
+fo96 <- makeFecObj(d96, Formula=c(fec0~size, fec1~size+size2),
+                   Family=c("binomial", "poisson"),
+                   Transform=c("none", -1),
+                   meanOffspringSize=mean(d94[is.na(d1$size)==TRUE & is.na(d94$sizeNext)==FALSE,"sizeNext"]),
+                   sdOffspringSize=sd(d94[is.na(d1$size)==TRUE &
+is.na(d94$sizeNext)==FALSE,"sizeNext"]),
+fecConstants=data.frame(fec2=fec2,fec3=fec3,fec4=fec4),
+offspringSplitter=data.frame(seedbank=goSB,
+                             continuous=(1-goSB)),
+vitalRatesPerOffspringType=data.frame(seedbank=c(1,1,1,0,0),
+                                      continuous=c(1,1,1,1,1),
+                                      row.names=c("fec0","fec1",
+                                                  "fec2","fec3","fec4")))
+
+Fmatrix96 <- makeIPMFmatrix(fecObj = fo96, minSize = minSize, 
+                            maxSize = maxSize, nBigMatrix = 80, 
+                            correction = "constant")
+
+dto96 = new("discreteTrans") #this is different from the appendix b/c "makeDiscreteTrans" was not working"
+dummy96 <- as.matrix(fo96@offspringRel$coefficients[1])
+dimnames(dummy96) <- list(1,"seedbank")
+dto96@meanToCont <- as.matrix(dummy96,dimnames=c(1,"seedbank"))
+dummy96 <- as.matrix(fo96@sdOffspringSize)
+dimnames(dummy96) <- list(1,"seedbank")
+dto96@sdToCont <- as.matrix(dummy96,dimnames=c(1,"seedbank"))
+dto96@moveToDiscrete = glm(rep(0, 21) ~ 1, family = binomial) #this is different from the appendix b/c of the first issue above 
+dtrans = as.matrix(staySB + (1 - staySB)*fec3*fec4)
+dimnames(dtrans) = list("continuous","continuous")
+dto96@discreteTrans = dtrans
+
+Pmatrix96 <- makeIPMPmatrix(growObj = go96, survObj = so96, 
+                            discreteTrans = dto96,minSize = minSize,
+                            maxSize = maxSize, nBigMatrix = 80,
+                            correction="constant")
+
+IPM96 <- Pmatrix96 + Fmatrix96
+```
+
+### BQC Version - 96-97 IPM 
+```{r}
+
+```
+
+## Life Table Response Experiment (LTRE) analysis 
+LTREs require at least two diﬀerent stage-structured population models.
+
+### First check if the population growth rate is different between the two different models/years
+```{r}
+lambda94 <- Re(eigen(IPM94)$value[1])
+lambda96 <- Re(eigen(IPM96)$value[1])
+
+lambda94
+lambda96
+```
+Growth rates are similar. To test for a significant difference, you can use bootstrapped replicates of each and calculating the overlap between the distribution of lambda for each model 
+
+### Plot the two IPMS
+```{r}
+require(fields)
+
+par(mfrow=c(1,2))
+
+image.plot(2:dim(IPM94)[1],
+           2:dim(IPM94)[1],
+           t(IPM94[2:maxSize,2:maxSize]),
+           main = "IPM 1994-1995",
+           xlab = "Size at t",
+           ylab = "Size at t+1")
+abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
+
+image.plot(2:dim(IPM96)[1],
+           2:dim(IPM96)[1],
+           t(IPM96[2:maxSize,2:maxSize]),
+           main = "IPM 1996-1997",
+           xlab = "Size at t",
+           ylab = "Size at t+1")
+abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
+```
+
+### BQC Version - Plot both IPMs
+```{r}
+
+```
+
+The basic idea behind an LTRE is to construct a linear model where the diﬀerence between estimated population growth rates arises from the additive eﬀects of the diﬀerences in the underlying vital rates, weighted by their associated sensitivities (Caswell et al. 1984, de Kroon et al. 1986, 2000).
+
+### 1. Define the baseline (control) 
+For convenience, we will arbitrarily define the IPM for 1994-1995 as the ’control’; thus we are interested in examining how the diﬀerences in λ from the IPM in 1996-1997 in comparison to the IPM ’control’ are brought about by the underlying processes of survival, growth and reproduction. 
+
+### 2. Designate K+
+The second step in the LTRE is to designate the arithmetic mean of the two IPMs as IPM K†. This mid-way IPM will be used later on to evaluate the diﬀerences in the sensitivities of the IPM kernels to be compared.
+```{r}
+IPM_mid <- (IPM94 + IPM96)/2
+```
+
+### 3. Calculate the IPM of the difference between the K kernels 
+```{r}
+IPM_diff <- IPM96 - IPM94
+```
+
+### 4. What parts of the life cycle are responsible for the difference in lambda?
+Weight IPM_diff by the sensitivity of K+
+```{r}
+Sensi_IPM_mid <- sens(IPM_mid)
+IPM_contrib <- IPM_diff * Sensi_IPM_mid
+```
+
+### BQC Version - Sensitivities 
+```{r}
+
+```
+
+### Plot the results 
+```{r}
+require(fields)
+
+par(mfrow=c(1,3))
+
+image.plot(0:dim(Sensi_IPM_mid)[1],
+           0:dim(Sensi_IPM_mid)[1],
+           t(log(Sensi_IPM_mid)),
+           main = "Sensitivity of mid-way IPM",
+           xlab = "Seedbank and size at t",
+           ylab = "Seedbank and size at t+1")
+abline(a = 0, b = 1, lty= 2, col = "black", lwd=2)
+legend("topleft",legend="A",box.lwd = 0)
+
+image.plot(2:dim(IPM_diff)[1],
+           2:dim(IPM_diff)[1],
+           t(IPM_diff[2:maxSize,2:maxSize]),
+           main = "Element differences between both IPMs",
+           xlab = "Size at t",
+           ylab = "Size at t+1")
+abline(a = 0, b = 1, lty= 2, col = "black", lwd=2)
+legend("topleft",legend="B",box.lwd = 0)
+
+image.plot(2:dim(IPM_contrib)[1],
+           2:dim(IPM_contrib)[1],
+           t(IPM_contrib[2:maxSize,2:maxSize]),
+           main = "Contributions to differences\nin expression(lambda)",
+           xlab = "Size at t",
+           ylab = "Size at t+1")
+abline(a = 0, b = 1, lty= 2, col = "black", lwd=2)
+legend("topleft",legend="C",box.lwd = 0)
+```
+Fig A shows: the sensitivity of the IPM K† kernel to changes in
+the emergence of seeds from the seed bank is high. But the seed bank dynamics were modeled the same way in both IPMs so Figs B and C are just about the continuous stage 
+
+Fig C: shows that 
+1. more shrinkage of indivs 20-60 cm in height in 96-97 --> reduced rep 
+2. Indivs of larger sizes produced more and larger seedlings in 96-97. However, because the sensitivity of this latter process is negligible (figure A), the diﬀerence in shrinkage is the leading cause of the diﬀerence in λ.
+-BQC - I'm confused how this would lower pop growth, unless it means that if you were smaller you were producing fewer seedlings?
+
+### BQC Version - Plot the LTRE
+```{r}
+
+```
+
+
+### Cross check the LTRE
+the summation of the contributions of the matrix elements in the discretized kernel of IPMContributions should approximately equal the diﬀerences between the λ values for IPM1996−1997 and IPM1994−1995.
+```{r}
+lambda96 - lambda94
+sum(IPM_contrib)
+```
+*I get different numbers than them for this. But the numbers are still close to each other so I think that's good.
+
+To our knowledge, no tests or statistics have been designed to evaluate the adequacy of the approximation used in LTREs. Instead, deviations from the above equation of less than 5% are taken as ’good enough’ in a rule-of-thumb manner.
+```{r}
+lambda_diff <- lambda96 - lambda94
+
+LTRE_sum_contrib <- sum(IPM_contrib)
+
+abs(lambda_diff-LTRE_sum_contrib)/abs(lambda_diff)*100
+```
+Different deviation than what they get, plus I'm confused how they're calculating the %
