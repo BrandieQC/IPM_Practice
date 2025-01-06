@@ -339,7 +339,6 @@ g.yx=function(xp,x,params) {
 #### Define the structure of the IPM
 ```{r}
 # the sizes we are integrating over
-#min.size=.9*min(c(d94$size, d94$sizeNext),na.rm=T) #code from App A
 #max.size=1.1*max(c(d94$size, d94$sizeNext),na.rm=T) #code from App A
 minSize<-min(d1$size,na.rm=T) #same sizes that Merow uses in App C
 maxSize<-max(d1$size,na.rm=T) #same sizes that Merow uses in App C
@@ -462,7 +461,7 @@ fec0.models <- fec0.models %>%
   mutate(glm = map(f, ~ glm(as.formula(.), 
                             data = d94, family = "binomial")), #run the models 
          predict = map(glm, ~ cbind(newdata, fec0=predict(., newdata, type = "response"))), #put predictions generated from the models into the "newdata" dataframe 
-         #type = response is for glm models, back transforms probabilites from logit scale 
+         #type = response is for glm models, back transforms probabilities from logit scale 
          glance = map(glm, glance)) #glance at the model results
 
 fec0.models %>% unnest(glance) #look at the model fitting info 
@@ -483,7 +482,7 @@ d94 %>% filter(!is.na(fec0)) %>%
   scale_color_viridis_d(end = 0.9)
 ```
 
-### Merow # Fruits models - Need to filter to fec0==1??
+### Merow # Fruits models
 Model exploration - number of fruits per plant 
 ```{r}
 fec1.0_94 <- makeFecObj(d94, Formula = fec1~1, Family = "poisson")
@@ -515,7 +514,7 @@ AIC(fec1.2_94@fitFec[[1]]), AIC(fec1.3_94@fitFec[[1]]))),
 col = c(2:5), lty = 1, xjust = 1, bg = "white")
 ```
 
-### BQC Version - Number Fruits/Plant - Need to filter to fec0==1??
+### BQC Version - Number Fruits/Plant 
 ```{r}
 fec1.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"), #names of the different models
                       f = c("fec1 ~ 1", 
@@ -591,6 +590,7 @@ ylab = "Size at t+1")
 ```
 
 ### BQC Version - F kernel  
+
 #### Make dataframe to save reproduction-related params
 ```{r}
 #fec2 = #seeds produced per fruit - was included in fec.seed in Merrow App. A, added it as an extra param here 
@@ -600,9 +600,11 @@ ylab = "Size at t+1")
 params.rep = data.frame(
   flower.int=NA, # Intercept from log reg of flowering prob 
   flower.slope = NA, # Slope from log reg of flowering prob 
+  flower.slope2 = NA, #qudaratic slope
   flower.slope3 = NA, # Cubic slope from log reg of flowering prob 
   fruit.int=NA, # Intercept from Poisson regression of fruit number
   fruit.slope=NA, # Slope from Poisson regression of fruit number
+  fruit.slope2=NA, #quadratic slope
   fruit.slope3=NA,# Cubic slope from Poisson regression of fruit number
   seed.per.fruit=fec2, #seeds produced per fruit
   germ.prob=fec3, #germ prob 
@@ -623,6 +625,7 @@ fec0.coefs <- fec0.models %>%
 
 params.rep$flower.int <- fec0.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
 params.rep$flower.slope <- fec0.coefs %>% filter(term == "size") %>% pull(estimate)
+params.rep$flower.slope2 <- fec0.coefs %>% filter(term == "I(size^2)") %>% pull(estimate)
 params.rep$flower.slope3 <- fec0.coefs %>% filter(term == "I(size^3)") %>% pull(estimate)
 ```
 
@@ -635,9 +638,11 @@ fec1.coefs <- fec1.models %>%
 
 params.rep$fruit.int <- fec1.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
 params.rep$fruit.slope <- fec1.coefs %>% filter(term == "size") %>% pull(estimate)
+params.rep$fruit.slope2 <- fec1.coefs %>% filter(term == "I(size^2)") %>% pull(estimate)
 params.rep$fruit.slope3 <- fec1.coefs %>% filter(term == "I(size^3)") %>% pull(estimate)
 ```
 
+**Fec5 already describes this - so could just pull out the mean and sd of those individuals like in Appendix A
 ```{r}
 recruit_info <- d94 %>% filter(is.na(size)) %>% #recruits are the ones that only have sizeNext
   filter(year==1994) %>%  #exclude the seedbank 
@@ -655,18 +660,45 @@ params.rep$recruit.size.sd=recruit_info$recruit.size.sd
 ```{r}
 # flowering prob. function 
 p.flower.x=function(x,params.rep) { #flowering prob. 
-              u=exp(params.rep$flower.int+params.rep$flower.slope*x+params.rep$flower.slope3*x^3)
+              u=exp(params.rep$flower.int+params.rep$flower.slope*x+params.rep$flower.slope2*x^2+params.rep$flower.slope3*x^3)
               return(u/(1+u)) #back transform from logit scale 
 }
+```
 
-#reproduction function (with above prob. function incorporated)
+```{r}
+#fruit number function
+fruit.n <- function(x, params.rep) {
+  exp(params.rep$fruit.int + 
+        x*params.rep$fruit.slope + 
+        x^2*params.rep$fruit.slope2 + 
+        x^3*params.rep$fruit.slope3)
+}
+
+# reality check (compare to plot...looks good)
+fruit.n(40, params.rep)
+fruit.n(60, params.rep)
+fruit.n(80, params.rep)
+```
+
+```{r}
+#reproduction function (with above prob. and fruit functions incorporated)
 f.yx=function(xp,x,params.rep) {
-        p.flower.x(x,params.rep)* #have to flower first
-    exp(params.rep$fruit.int+params.rep$fruit.slope*x+params.rep$fruit.slope3*x^3)* #then produce a certain number of fruits 
+  #fresh seeds:
+  p.flower.x(x,params.rep)* #have to flower first
+    fruit.n(x, params.rep)* #then produce a certain number of fruits 
     params.rep$seed.per.fruit* #those fruits have a certain number of seeds 
+    (1-goSB)* #prob seed of not going to seed bank 
     params.rep$germ.prob* #those seeds have to germinate
               params.rep$establishment.prob* #recruits have to surv post germ
-              dnorm(xp,mean=params.rep$recruit.size.mean,sd=params.rep$recruit.size.sd) #recruits grow to a certain size 
+              dnorm(xp,mean=params.rep$recruit.size.mean,sd=params.rep$recruit.size.sd) + #recruits grow to a certain size 
+    #seeds that germinate out of the seedbank:
+   p.flower.x(x,params.rep)* #have to flower first
+    fruit.n(x, params.rep)* #then produce a certain number of fruits 
+    goSB* #prob of going to seedbank
+    (1-staySB)* #prob of leaving seedbank
+     params.rep$germ.prob* #those seeds have to germinate
+              params.rep$establishment.prob* #recruits have to surv post germ
+              dnorm(xp,mean=params.rep$recruit.size.mean,sd=params.rep$recruit.size.sd)
 }
 ```
 
@@ -686,12 +718,11 @@ F %>% as_tibble() %>%
   geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
   geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
   scale_fill_viridis_c(option = "plasma") + #change contour colors 
-  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Size and Growth") +
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "F Matrix: Fecundity") +
   coord_equal() + #make it a square plot 
   theme_bw()
 ```
-**Clearly I did something wrong!!
-Get lots of NAs at bigger sizes!
+**Scale is off
 
 ## Consider transitions in and out of the discrete stage 
 ```{r}
