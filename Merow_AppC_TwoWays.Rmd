@@ -722,7 +722,6 @@ F %>% as_tibble() %>%
   coord_equal() + #make it a square plot 
   theme_bw()
 ```
-**Scale is off
 
 ## Consider transitions in and out of the discrete stage 
 ```{r}
@@ -753,6 +752,7 @@ abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
 ```
 
 ### BQC Version - Consider the discrete stage 
+Not really sure what the Merow code is actually doing for this step, so having a hard time making my own
 ```{r}
 
 ```
