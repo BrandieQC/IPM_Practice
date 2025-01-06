@@ -345,7 +345,7 @@ maxSize<-max(d1$size,na.rm=T) #same sizes that Merow uses in App C
 
 n=80 # dimensions of the matrix - same as App C, App A used 100
 
-b=min.size+c(0:n)*(max.size-min.size)/n # boundary points
+b=minSize+c(0:n)*(maxSize-minSize)/n # boundary points
 y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
 h=y[2]-y[1] # step size
 ```
