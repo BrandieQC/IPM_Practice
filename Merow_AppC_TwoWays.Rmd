@@ -20,6 +20,7 @@ library(ggbeeswarm)
 library(magrittr)
 library(nlme)
 library(IPMpack)
+source("makeDiscreteTrans.R", local=as.environment("package:IPMpack")) #fix the makeDiscreteTrans issue
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter", "dplyr")
 ```
@@ -725,19 +726,18 @@ F %>% as_tibble() %>%
 
 ## Consider transitions in and out of the discrete stage 
 ```{r}
-dto94 = new("discreteTrans") #this is different from the appendix b/c "makeDiscreteTrans" was not working"
+dto94 <- makeDiscreteTrans(d94)
 
 dummy94 <- as.matrix(fo94@offspringRel$coefficients[1])
 dimnames(dummy94) <- list(1,"seedbank")
 dto94@meanToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
+
 dummy94 <- as.matrix(fo94@sdOffspringSize)
 dimnames(dummy94) <- list(1,"seedbank")
 dto94@sdToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
+dto94@discreteTrans[1,1] <- staySB + (1 - staySB)*fec3*fec4
 
-dto94@moveToDiscrete = glm(rep(0, 21) ~ 1, family = binomial) #this is different from the appendix b/c of the first issue above 
-dtrans = as.matrix(staySB + (1 - staySB)*fec3*fec4)
-dimnames(dtrans) = list("continuous","continuous")
-dto94@discreteTrans = dtrans
+dto94
 ```
 
 After having specified the transitions for the discrete stage, the seed bank, we can reconsider the P kernel, now including the discrete stage, with a single line:
