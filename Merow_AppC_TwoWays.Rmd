@@ -691,15 +691,17 @@ f.yx=function(xp,x,params.rep) {
     (1-goSB)* #prob seed of not going to seed bank 
     params.rep$germ.prob* #those seeds have to germinate
               params.rep$establishment.prob* #recruits have to surv post germ
-              dnorm(xp,mean=params.rep$recruit.size.mean,sd=params.rep$recruit.size.sd) + #recruits grow to a certain size 
-    #seeds that germinate out of the seedbank:
-   p.flower.x(x,params.rep)* #have to flower first
-    fruit.n(x, params.rep)* #then produce a certain number of fruits 
-    goSB* #prob of going to seedbank
-    (1-staySB)* #prob of leaving seedbank
-     params.rep$germ.prob* #those seeds have to germinate
-              params.rep$establishment.prob* #recruits have to surv post germ
-              dnorm(xp,mean=params.rep$recruit.size.mean,sd=params.rep$recruit.size.sd)
+              dnorm(xp,mean=params.rep$recruit.size.mean,sd=params.rep$recruit.size.sd) 
+  #below code apparently not included in Merow code
+  #seeds that germinate out of the seedbank:
+#  + #recruits grow to a certain size 
+#   p.flower.x(x,params.rep)* #have to flower first
+#    fruit.n(x, params.rep)* #then produce a certain number of fruits 
+#    goSB* #prob of going to seedbank
+#    (1-staySB)* #prob of leaving seedbank
+#     params.rep$germ.prob* #those seeds have to germinate
+#              params.rep$establishment.prob* #recruits have to surv post germ
+#              dnorm(xp,mean=params.rep$recruit.size.mean,sd=params.rep$recruit.size.sd)
 }
 ```
 
@@ -735,7 +737,11 @@ dto94@meanToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
 dummy94 <- as.matrix(fo94@sdOffspringSize)
 dimnames(dummy94) <- list(1,"seedbank")
 dto94@sdToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
-dto94@discreteTrans[1,1] <- staySB + (1 - staySB)*fec3*fec4
+
+#note the below is a correction for Merow's mistake, if want the results to match merow should use: dto94@discreteTrans[1,1] <- staySB +  (1 - staySB)*fec3*fec4 
+dto94@discreteTrans[1,1] <- staySB #from seedbank to seedbank
+dto94@discreteTrans[2,1] <- (1 - staySB)*fec3*fec4 #from seedbank to continuous 
+
 
 dto94
 ```
@@ -752,10 +758,124 @@ abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
 ```
 
 ### BQC Version - Consider the discrete stage 
-Not really sure what the Merow code is actually doing for this step, so having a hard time making my own
-```{r}
 
+#### Make transition matrix 
+```{r}
+#required constants / vectors:
+nDiscreteClasses = 1 #only 1 discrete class (seedbank)
+stages <- c("seedbank", "continuous", "dead")
+
+#make the structure of the transition matrix :
+trans_matrix <- matrix(0, nrow = nDiscreteClasses + 2, ncol = nDiscreteClasses + 1,
+                       dimnames = list(stages, stages[1:(length(stages) -1)])) 
+
+#fill in the matrix with the counts from the dataframe:
+ for (j in stages[1:(length(stages) - 1)]) {
+      for (i in stages) trans_matrix[i, j] <- sum(d94[d94$stage == 
+                                                           j & d94$stageNext == i, ]$number, na.rm = TRUE)
+    }
+trans_matrix
+#check that it worked:
+d94 %>% filter(stage=="seedbank" & stageNext=="continuous") #looks right!
+
+#convert numbers to proportions within each column:
+for (j in stages[1:(length(stages) - 1)]) 
+  trans_matrix[, j] <- trans_matrix[, j]/sum(trans_matrix[, j], na.rm = TRUE) 
+trans_matrix
+
+#convert seedbank transitions back to their correct values (their values were already proportions before the previous step)
+trans_matrix[1,1] <- staySB #from seedbank to seedbank
+trans_matrix[2,1] <- (1 - staySB)*fec3*fec4 #from seedbank to continuous 
+trans_matrix
 ```
+
+#### Pull out the mean and SD of offspring size 
+```{r}
+#mean recruit size:
+mean_recruit_s <- d94 %>% filter(is.na(size), !is.na(sizeNext)) %>%  #recruits have sizenext, but not size 
+  summarise(meanSizeNext=mean(sizeNext)) %>% 
+  pull(meanSizeNext)
+
+#sd of recruit size 
+sd_recruit_s <-  d94 %>% filter(is.na(size), !is.na(sizeNext)) %>%  #recruits have sizenext, but not size 
+  summarise(sdSizeNext=sd(sizeNext)) %>% 
+  pull(sdSizeNext)
+```
+
+### Construct a model predicting the transitions to seedbank
+```{r}
+#subset d94 and make a column that represents yes/no transition to discrete:
+discrete_prob <- d94 %>% 
+  filter(stage=="continuous", surv==1) %>% #filter to survivors 
+  mutate(contToDiscrete = if_else(stageNext=="continuous", 0, 1)) %>% #1 = transition to Discrete
+  mutate(size2=size^2, size3=size^3) #just added this because it was in the IPMpack code, I assume it's for cases when a data transformation is necessary?
+
+#predict transitions to discrete given size 
+move_Discrete_glm <- glm(contToDiscrete ~ size, family=binomial, data=discrete_prob) #the weird thing about this is that the one row that has contToDiscrete=1 doesn't have a size
+move_Discrete_glm
+```
+
+#### Use predictions from the move_Discrete_glm to define sizes for each of the possible transition classes 
+```{r}
+move_Discrete_pred <- predict(move_Discrete_glm, 
+                              #make predictions based off of glm that predicted transitions to discrete
+                              data.frame(size = y, size2 = (y * y)), type = "response") #y = mesh points 
+#cont --> cont
+n=80 # dimensions of the matrix
+cont.to.cont <- Pc * matrix(1 - move_Discrete_pred, nrow = n, ncol = n, byrow = TRUE)
+
+#discrete --> discrete 
+disc.to.disc <- trans_matrix[1,1] #pull from trans matrix
+
+#seedbank --> continous
+disc.to.cont <- matrix(0, ncol = nDiscreteClasses, nrow = n)
+tmp <- dnorm(y, mean_recruit_s[1], sd_recruit_s[1]) * h 
+#y = all t+1 size values we want to predict 
+#h = matrix step size 
+#dnorm will give you the probablity of a certain size given the mean and sd of the data 
+ 
+#account for the eviction correction (style = constant)
+tmp <- tmp/sum(tmp)
+
+disc.to.cont[, 1] <- trans_matrix["continuous", "seedbank"] * tmp  
+
+#continuous --> seedbank 
+cont.to.disc <- matrix(0, nrow = nDiscreteClasses, ncol = n)
+cont.to.disc[1, ] <- S * # survival at each size midpoint (from earlier P matrix code)
+  move_Discrete_pred #adjust survival predictions by the prob of transitioning between stages 
+  #* can ignore the below line of this code because we only have 1 discrete class, if there were multiple discrete classes we would have to multiply the proportions of each of those classes with the predictions 
+  #trans_matrix["seedbank","continuous"]/sum(trans_matrix["seedbank", "continuous"])
+```
+
+#### Make the new P matrix (need to edit)
+```{r}
+#combine the above matrices in the way that matched the transition matrix 
+get.disc.matrix <- rbind(cbind(disc.to.disc, cont.to.disc), #seedbank -->seedbank, #continuous to seedbank (first row of trans matrix )
+                             cbind(disc.to.cont, cont.to.cont)) #2nd row of trans matrix 
+
+#convert to P matrix format 
+P_new <- get.disc.matrix
+```
+
+#### Plot the P matrix with the discrete transitions accounted for 
+```{r}
+y_sb <- c(0,y) #add a slot for the seedbank column 
+
+P_new %>% as_tibble() %>%
+  set_colnames(y_sb) %>% #column names = each size mesh point 
+  mutate(size.t1=y_sb) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Size and Growth") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+#matches Merow!
+```
+Although diﬃcult to see, the bottom left-most cell, which corresponds to the probability of a seed remaining in the seed bank, has a value
 
 ## Create the IPM by combining the P and F kernels
 
