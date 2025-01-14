@@ -875,7 +875,16 @@ P_new %>% as_tibble() %>%
   theme_bw()
 #matches Merow!
 ```
-Although diﬃcult to see, the bottom left-most cell, which corresponds to the probability of a seed remaining in the seed bank, has a value
+Although diﬃcult to see, the bottom left-most cell, which corresponds to the probability of a seed remaining in the seed bank, has a value.
+**So we don't have to change the F matrix to account for discrete transitions??
+
+#### Add the seedbank column (full of 0s) to the F matrix
+```{r}
+sb_row <- matrix(0, nrow = 1, ncol = 80)
+F_new_row <- rbind(sb_row, F)
+sb_col <- matrix(0, nrow = 81, ncol = 1)
+F_new <- cbind(sb_col,F_new_row)
+```
 
 ## Create the IPM by combining the P and F kernels
 
@@ -884,10 +893,27 @@ Merow:
 IPM94 <- Pmatrix94 + Fmatrix94
 ```
 
-BQC: Will get an error for this until fix the NAs in the F matrix 
+### BQC VERSION
 ```{r}
-K=P+F                             # full matrix
+K=P_new+F_new                             # full matrix 
 (lam=Re(eigen(K)$values[1]))      # population growth rate
+#lambda is a little different than Merow et al, but qualitatively similar 
+```
+
+```{r}
+K %>% as_tibble() %>%
+  set_colnames(y_sb) %>% #column names = each size mesh point 
+  mutate(size.t1=y_sb) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "IPM 1994-1995") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+#somewhat similar to theirs!
 ```
 
 
