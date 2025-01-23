@@ -759,6 +759,8 @@ abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
 
 ### BQC Version - Consider the discrete stage 
 
+**Need to also change the F matrix to account for offspring that go to the SB - it's part of their fecundity object and makeIPMFmatrix 
+
 #### Make transition matrix 
 ```{r}
 #required constants / vectors:
