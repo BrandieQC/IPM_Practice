@@ -141,17 +141,64 @@ wl2_all_2023 %>%
   geom_function(fun = plot_surv, color = "red") + 
   facet_wrap(~ parent.pop)
 #something clearly didn't work here. The predictions start at 0.5 surv rather than 0...
+
+#plot all pops on same plot:
+wl2_all_2023 %>%
+  ggplot(aes(x=height.cm, y = surv)) +
+  geom_point(aes(color = parent.pop), alpha=.1) + 
+  geom_function(fun = plot_surv, color = "red") 
 ```
 
 
 ## Growth Models
+Observed Patterns
 ```{r}
+wl2_all_2023 %>% 
+  ggplot(aes(x=height.cm, y=height_next)) +
+  geom_point(aes(color = parent.pop), alpha=.1)  +
+  scale_color_viridis_d(end = 0.9)
+```
 
+
+```{r}
+growth_models_fixed <- tribble(
+  ~name,          ~f,
+  "1_intercept",              "height_next ~ 1", 
+  "2_linear_size",            "height_next ~ height.cm", 
+  "3_linear_pops",            "height_next ~ parent.pop",
+  "4_linear_size_pops",       "height_next ~ height.cm*parent.pop",
+  "5_quadratic_size",         "height_next ~ height.cm + I(height.cm^2)", 
+  "6_cubic_size",             "height_next ~ height.cm + I(height.cm^2) + I(height.cm^3)",
+  "7_quadratic_size_pops",    "height_next ~ height.cm*parent.pop + I(height.cm^2)", 
+  "8_cubic_size_pops",        "height_next ~ height.cm*parent.pop + I(height.cm^2) + I(height.cm^3)"
+)
+
+#run the models 
+growth_models_fixed <- growth_models_fixed %>%
+  mutate(lm = map(f, ~ lm(as.formula(.), data = wl2_all_2023, family = "binomial")), #run the models 
+         predict = map(lm, predict), # predicting from original data...
+         glance = map(lm, glance)) #glance at the model results
+
+growth_models_fixed %>% select(-f, -lm) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
+#cubic size with pops included seems to be the best
+```
+
+```{r}
+growth.model.final <- growth_models_fixed %>% filter(name == "8_cubic_size_pops") %>% pull(lm) %>% magrittr::extract2(1)
+summary(growth.model.final)
 ```
 
 ### Predicted vs. Observed Growth
 ```{r}
+wl2_all_2023 %>% 
+  drop_na(height.cm, height_next) %>% 
+  cbind(predicted={growth_models_fixed %>% filter(name=="8_cubic_size_pops") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=height_next, y = predicted)) +
+  geom_point(alpha=.2) +
+  geom_abline(color="skyblue2") +
+  facet_wrap(~parent.pop, scales="free")
 
+#looks decent for most pops
 ```
 
 
