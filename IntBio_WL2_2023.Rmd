@@ -71,10 +71,13 @@ wl2_all_2023_nest <-wl2_all_2023 %>% ungroup() %>% nest(.by=survey_date)
 
 ## Survival Models - Using height is the main size estimte here 
 ```{r}
-#create dataframe to bind predictions to, this will be used for all model fitting 
-predictions = tibble(height.cm=seq(min(wl2_all_2023$height.cm, na.rm = TRUE),
+#create dataframe to bind predictions to, this will be used for all model fitting
+pop_predictions <- wl2_all_2023 %>% ungroup() %>% select(parent.pop) %>% distinct() %>%  #get pop ids
+  group_by(parent.pop) %>% 
+  expand(height.cm=seq(min(wl2_all_2023$height.cm, na.rm = TRUE),
                           max(wl2_all_2023$height.cm, na.rm = TRUE),
-                          length.out=1001))
+                          length.out=1001)) 
+pop_predictions
 ```
 
 
@@ -94,11 +97,14 @@ surv_models_fixed <- tribble(
 #run the models 
 surv_models_fixed <- surv_models_fixed %>%
   mutate(glm = map(f, ~ glm(as.formula(.), data = wl2_all_2023, family = "binomial")), #run the models 
-         predict = map(glm, ~ cbind(predictions, surv=predict(., predictions, type = "response"))), #put predictions generated from the models into the "predictions" dataframe 
+         predict = map(glm, ~ cbind(pop_predictions, surv=predict(., pop_predictions, type = "response"))), #put predictions generated from the models into the "pop_predictions" dataframe 
         # type = response is for glm models, back transforms probabilities from logit scale 
          glance = map(glm, glance)) #glance at the model results
 
 surv_models_fixed %>% unnest(glance) #look at the model fitting info 
+surv_models_fixed %>% select(-f, -glm) %>% unnest(glance)
+surv_models_fixed %>% select(-f, -glm) %>% unnest(glance) %>% arrange(BIC)
+#Cubic seems best, but what we really want is a model for each survey date, right?
 ```
 
 Attempt at pop = random - currently not working
