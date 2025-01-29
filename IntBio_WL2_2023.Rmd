@@ -1,0 +1,108 @@
+---
+title: "IntBio_WL2_2023"
+author: "Brandie QC"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Make a practice IPM with WL2 2023 Data
+
+## Libraries
+```{r}
+library(tidyverse)
+library(broom)
+library(magrittr)
+library(lmerTest)
+```
+
+## Load the data
+```{r}
+wl2_size_2023 <- read_csv("data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
+wl2_mort_2023 <- read_csv("data/WL2_Mortality.csv") %>% select(BedLoc, Genotype, parent.pop, death.date)
+```
+
+## Merge
+```{r}
+wl2_all_2023_OLD <- left_join(wl2_size_2023, wl2_mort_2023) #42 more rows, why? duplicate rows somewhere 
+wl2_all_2023_OLD %>% group_by(Genotype, survey_date) %>% summarize(n=n()) %>% arrange(desc(n)) 
+##Duplicates: CC_1_2, CC_9_6, IH_4_5, SC_5_6, SQ2_6_2
+wl2_size_2023 %>% filter(Genotype=="CC_1_2") #multiple places on datasheet (K_13_A, K_5_C)
+wl2_size_2023 %>% filter(Genotype=="CC_9_6") #duplicated on certain dates  
+wl2_size_2023 %>% filter(Genotype=="IH_4_5") #duplicated on certain dates  --- multiple places (B_22_B, B_32_A)
+wl2_size_2023 %>% filter(Genotype=="SC_5_6") #duplicated on certain dates  
+wl2_size_2023 %>% filter(Genotype=="SQ2_6_2") #duplicated on certain dates  
+
+#anti_join(wl2_size_2023, wl2_mort_2023) #8 rows in the size dataframe without death date info, probably died at planting 
+#anti_join(wl2_mort_2023, wl2_size_2023)
+
+#GET RID OF DUPLICATES:
+wl2_size_2023_merge_prep <- wl2_size_2023 %>% 
+  arrange(Genotype, survey_date, height.cm) %>% 
+  distinct(Genotype, survey_date, .keep_all=TRUE)
+  
+wl2_mort_2023_merge_prep <- wl2_mort_2023 %>% 
+  filter(BedLoc != "B_32_A", BedLoc !="K_5_C")
+
+#Merge with corrections 
+wl2_all_2023 <- left_join(wl2_size_2023_merge_prep, wl2_mort_2023_merge_prep)
+tail(wl2_all_2023, 10)
+unique(wl2_all_2023$death.date)
+```
+
+## Add in surv and sizenext columns
+```{r}
+wl2_all_2023 <- wl2_all_2023 %>% 
+  mutate(death.date=mdy(death.date)) %>% 
+  group_by(Genotype) %>% 
+  mutate(height_next = lead(height.cm, order_by = survey_date), #next timepoints height
+         long.leaf_next = lead(long.leaf.cm, order_by = survey_date), #next timepoints leaf length 
+         date_next = lead(survey_date, order_by = survey_date), #needed for surv code 
+         surv=if_else(is.na(death.date), 1,
+                      if_else(date_next>=death.date, 0, 1))) #survival to the next time point 
+         
+wl2_all_2023 %>% arrange(Genotype, survey_date)
+
+wl2_all_2023_nest <-wl2_all_2023 %>% ungroup() %>% nest(.by=survey_date)
+```
+
+## Survival Models - Using height is the main size estimte here 
+```{r}
+#create dataframe to bind predictions to, this will be used for all model fitting 
+predictions = tibble(height.cm=seq(min(wl2_all_2023$height.cm, na.rm = TRUE),
+                          max(wl2_all_2023$height.cm, na.rm = TRUE),
+                          length.out=1001))
+```
+
+```{r}
+surv.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"), #names of the different models
+                      f = c("surv ~ 1", 
+                            "surv ~ height.cm + (1|parent.pop)", 
+                            "surv ~ height.cm + I(height.cm^2) + (1|parent.pop)", 
+                            "surv ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|parent.pop)")) #model functions
+
+#run the models 
+surv.models <- surv.models %>%
+  mutate(glm = map(f, ~ glmer(as.formula(.), 
+                            data = wl2_all_2023, family = "binomial")), #run the models 
+         predict = map(glmer, ~ cbind(predictions, surv=predict(., predictions, type = "response"))), #put predictions generated from the models into the "predictions" dataframe 
+         #type = response is for glm models, back transforms probabilities from logit scale 
+         glance = map(glmer, glance)) #glance at the model results
+
+surv.models %>% unnest(glance) #look at the model fitting info 
+#AIC is very similar between models 
+#Choose quadratic to match Merow
+```
+
+### Predicted vs. Observed Survival 
+
+
+## Growth Models
+
+### Predicted vs. Observed Growth
+
+
+## P Matrix 
