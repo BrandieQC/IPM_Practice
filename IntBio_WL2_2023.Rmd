@@ -97,14 +97,12 @@ surv_models_fixed <- tribble(
 #run the models 
 surv_models_fixed <- surv_models_fixed %>%
   mutate(glm = map(f, ~ glm(as.formula(.), data = wl2_all_2023, family = "binomial")), #run the models 
-         predict = map(glm, ~ cbind(pop_predictions, surv=predict(., pop_predictions, type = "response"))), #put predictions generated from the models into the "pop_predictions" dataframe 
+         predict = map(glm, predict, type = "response"), # predicting from original data...
         # type = response is for glm models, back transforms probabilities from logit scale 
          glance = map(glm, glance)) #glance at the model results
 
-surv_models_fixed %>% unnest(glance) #look at the model fitting info 
-surv_models_fixed %>% select(-f, -glm) %>% unnest(glance)
-surv_models_fixed %>% select(-f, -glm) %>% unnest(glance) %>% arrange(BIC)
-#Cubic seems best, but what we really want is a model for each survey date, right?
+surv_models_fixed %>% select(-f, -glm) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
+#Cubic_size seems best, but what we really want is a model for each survey date, right?
 ```
 
 Attempt at pop = random - currently not working
@@ -126,8 +124,25 @@ surv.models_random <- surv.models_random %>%
        #  glance = map(glmer, glance)) #glance at the model results
 ```
 
+```{r}
+survival.model.final <- survival.models %>% filter(name == "6_cubic_size") %>% pull(glm) %>% magrittr::extract2(1)
+summary(survival.model.final)
+```
 
 ### Predicted vs. Observed Survival 
+```{r}
+#make a dataframe for just the predictions:
+surv.predictions <- surv.models %>% 
+  select(name, predict) %>% 
+  unnest(predict)
+
+d94 %>% filter(!is.na(surv)) %>%
+  ggplot(aes(x=size, y =surv)) + #actual data
+  geom_point() +
+  #geom_smooth() + 
+  geom_line(aes(color=name), data = surv.predictions) + #add in prediction lines 
+  scale_color_viridis_d(end = 0.9)
+```
 
 
 ## Growth Models
