@@ -106,7 +106,7 @@ surv_models_fixed %>% select(-f, -glm) %>% unnest(glance) %>% arrange(BIC) #look
 ```
 
 Attempt at pop = random - currently not working
-```{r}
+```{r, eval=FALSE}
 surv.models_random <- tibble(
   name=c("1_linear_pops", "2_linear_size_pops", "3_quadratic", "4_cubic"), #names of the different models
   #can't figure out how to have models without the random effect since glmer requires that 
@@ -125,29 +125,34 @@ surv.models_random <- surv.models_random %>%
 ```
 
 ```{r}
-survival.model.final <- survival.models %>% filter(name == "6_cubic_size") %>% pull(glm) %>% magrittr::extract2(1)
+survival.model.final <- surv_models_fixed %>% filter(name == "6_cubic_size") %>% pull(glm) %>% magrittr::extract2(1)
 summary(survival.model.final)
 ```
 
 ### Predicted vs. Observed Survival 
 ```{r}
-#make a dataframe for just the predictions:
-surv.predictions <- surv.models %>% 
-  select(name, predict) %>% 
-  unnest(predict)
+plot_surv <- function(x, m=survival.model.final) {
+  predict(m, newdata = tibble(height.cm = x), type = "response")
+}
 
-d94 %>% filter(!is.na(surv)) %>%
-  ggplot(aes(x=size, y =surv)) + #actual data
-  geom_point() +
-  #geom_smooth() + 
-  geom_line(aes(color=name), data = surv.predictions) + #add in prediction lines 
-  scale_color_viridis_d(end = 0.9)
+wl2_all_2023 %>%
+  ggplot(aes(x=height.cm, y = surv)) +
+  geom_point(alpha=.1) + 
+  geom_function(fun = plot_surv, color = "red") + 
+  facet_wrap(~ parent.pop)
+#something clearly didn't work here. The predictions start at 0.5 surv rather than 0...
 ```
 
 
 ## Growth Models
+```{r}
+
+```
 
 ### Predicted vs. Observed Growth
+```{r}
+
+```
 
 
 ## P Matrix 
