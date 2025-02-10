@@ -15,6 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(broom)
+library(broom.mixed)
 library(magrittr)
 library(lmerTest)
 ```
@@ -24,7 +25,7 @@ library(lmerTest)
 wl2_size_2023 <- read_csv("data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
 unique(wl2_size_2023$parent.pop) #all 23 pops!
 wl2_mort_2023 <- read_csv("data/WL2_Mortality_2023.csv") %>% 
-  select(block, BedLoc, Genotype, parent.pop=pop, death.date) %>% 
+  select(block, BedLoc, Genotype, parent.pop=pop, mf:death.date) %>% 
   mutate(parent.pop= str_replace(parent.pop, "Y08", "YO8")) %>% 
   mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4")) 
 unique(wl2_mort_2023$parent.pop) #all 23 pops!
@@ -50,7 +51,8 @@ wl2_size_2023_merge_prep <- wl2_size_2023 %>%
   distinct(Genotype, survey_date, .keep_all=TRUE)
 
 #Merge with corrections 
-wl2_all_2023 <- left_join(wl2_size_2023_merge_prep, wl2_mort_2023)
+wl2_all_2023 <- left_join(wl2_size_2023_merge_prep, wl2_mort_2023) %>%
+  select(survey_date:parent.pop, mf:rep,block:BedLoc, height.cm, long.leaf.cm, death.date)
 tail(wl2_all_2023, 10)
 unique(wl2_all_2023$death.date)
 ```
@@ -69,7 +71,7 @@ wl2_all_2023_timeprep <- wl2_all_2023 %>%
          surv=if_else(is.na(death.date), 1,
                       if_else(date_next>=death.date, 0, 1))) %>% #survival to the next size time point
   ungroup() %>%
-  drop_na(height.cm, height_next) #for models
+  drop_na(height.cm, height_next, surv) #for models
          
 wl2_all_2023_timeprep %>% arrange(Genotype, survey_date)
 
@@ -79,16 +81,6 @@ unique(wl2_all_2023_timeprep$elapsed_days) #mostly 1 or 2 weeks. 20 or 23 days f
 ```
 
 ## Survival Models - Using height as the main size estimte here 
-```{r}
-#create dataframe to bind predictions to, this will be used for all model fitting
-pop_predictions <- wl2_all_2023_timeprep %>% select(parent.pop) %>% distinct() %>%  #get pop ids
-  group_by(parent.pop) %>% 
-  expand(height.cm=seq(min(wl2_all_2023_timeprep$height.cm, na.rm = TRUE),
-                          max(wl2_all_2023_timeprep$height.cm, na.rm = TRUE),
-                          length.out=1001)) 
-pop_predictions
-```
-
 
 ```{r}
 surv_models_fixed <- tribble(
@@ -165,23 +157,84 @@ wl2_all_2023_timeprep %>%
   facet_wrap(~survey_date_char, scales = "free_x")
 ```
 
-## Attempt at pop = random - currently not working
-```{r, eval=FALSE}
-surv.models_random <- tibble(
-  name=c("1_linear_pops", "2_linear_size_pops", "3_quadratic", "4_cubic"), #names of the different models
-  #can't figure out how to have models without the random effect since glmer requires that 
-                      f = c("surv ~ 1 + (1|parent.pop)", 
-                            "surv ~ height.cm + (1|parent.pop)", 
-                            "surv ~ height.cm + I(height.cm^2) + (1|parent.pop)", 
-                            "surv ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|parent.pop)")) #model functions
+## Attempt at pop = random
+```{r}
+surv.models_random <- tribble(
+  ~name,          ~f,
+  "1a_intercept_block",              "surv ~ 1 + (1|block)", 
+  "1b_intercept_pop",              "surv ~ 1 + (1|parent.pop)", 
+  "1c_intercept_pop_mf",              "surv ~ 1 + (1|parent.pop/mf)", 
+  "1d_intercept__pop_mf_block",              "surv ~ 1 + (1|block) + (1|parent.pop/mf)", 
+  "2a_linear_size_block",           "surv ~ height.cm + (1|block)", 
+  "2b_linear_size_pops",           "surv ~ height.cm + (1|parent.pop)",   "2c_linear_size_pops_mf",           "surv ~ height.cm + (1|parent.pop/mf)",
+  "2d_linear_size_pops_mf_block",           "surv ~ height.cm + (1|block) + (1|parent.pop/mf)", 
+  "3a_linear_size_date_char", "surv ~ height.cm*survey_date_char + (1|block) + (1|parent.pop/mf)",
+ # "3b_linear_size_date",      "surv ~ height.cm*survey_date + (1|block) + (1|parent.pop/mf)",
+ #Caused by error:! (maxstephalfit) PIRLS step-halvings failed to reduce deviance in pwrssUpdate
+  "5_quadratic_size",         "surv ~ height.cm + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
+  "6_cubic_size",             "surv ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
+  "9a_quadratic_full_survey_date_char", "surv ~ height.cm*survey_date_char + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
+  #"9b_quadratic_full_survey_date",  "surv ~ height.cm*survey_date + I(height.cm^2) + (1|block) + (1|parent.pop/mf)",
+ #Caused by error:! (maxstephalfit) PIRLS step-halvings failed to reduce deviance in pwrssUpdate
+  #"10a_cubic_full_survey_date_char", "surv ~ height.cm*survey_date_char + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
+ #Caused by error:! pwrssUpdate did not converge in (maxit) iterations
+  #"10b_cubic_full_survey_date", "surv ~ height.cm*survey_date + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)"
+ #Caused by error:! (maxstephalfit) PIRLS step-halvings failed to reduce deviance in pwrssUpdate
+)
 
 #run the models 
 surv.models_random <- surv.models_random %>%
-  mutate(glm = map(f, ~ glmer(as.formula(.), 
-                            data = wl2_all_2023_timeprep, family = "binomial"))) #, #run the models 
-         #predict = map(glmer, ~ cbind(predictions, surv=predict(., predictions, type = "response"))), #put predictions generated from the models into the "predictions" dataframe 
-         #type = response is for glm models, back transforms probabilities from logit scale 
-       #  glance = map(glmer, glance)) #glance at the model results
+  mutate(glmer = map(f, ~ glmer(as.formula(.), 
+                            data = wl2_all_2023_timeprep, 
+                            family = "binomial")), #, #run the models 
+         predict = map(glmer, predict, type = "response"), 
+         glance = map(glmer, tidy),
+         AIC = map(glmer, AIC),
+         BIC = map(glmer, BIC)) #glance at the model results
+
+surv.models_random %>% select(-f, -glmer, -predict) %>% unnest(glance) 
+surv.models_random %>% select(-f, -glmer, -predict) %>% unnest(BIC) %>% arrange(BIC) #look at the model fitting info 
+surv.models_random %>% select(-f, -glmer, -predict) %>% unnest(AIC) %>% arrange(AIC) #look at the model fitting info 
+
+#2a_linear_size_block wins with BIC
+#9a_quadratic_full_survey_date_char wins with AIC
+```
+
+```{r}
+survival.model.final_random <- surv.models_random %>% filter(name == "9a_quadratic_full_survey_date_char") %>% pull(glmer) %>% magrittr::extract2(1)
+summary(survival.model.final_random)
+```
+
+### Predicted vs. Observed Survival 
+Calculate predictions - currently not working, can't figure out how to include block, pop/mf
+```{r, eval=FALSE}
+survival_curves_random <- wl2_all_2023_timeprep %>%
+  group_by(survey_date_char, block, parent.pop, mf) %>%
+  summarize(minSize = min(height.cm, na.rm = TRUE),
+            maxSize = max(height.cm, na.rm = TRUE)) %>%
+  
+  # generate a "newdata" data frame for each date
+  mutate(newdata = pmap(list(survey_date_char, block, parent.pop, mf, minSize, maxSize), \(d, x, y) tibble(survey_date_char = d,
+                                                        height.cm = seq(x, y, length.out = 101)))) %>%
+
+ # predictions for each date
+  mutate(surv = map(newdata, \(nd) predict(survival.model.final_random, newdata = nd, type = "response"))) %>%
+  
+  select(-survey_date_char) %>%
+
+  # unnest to plot
+  unnest(cols = c(newdata, surv), names_repair = "minimal") 
+
+survival_curves_random
+```
+
+- currently not working, can't figure out how to include block, pop/mf
+```{r, eval=FALSE}
+wl2_all_2023_timeprep %>%
+  ggplot(aes(x=height.cm, y = surv)) +
+  geom_point() +
+  geom_line(color = "red", data = survival_curves) +
+  facet_wrap(~survey_date_char, scales = "free_x")
 ```
 
 ## Growth Models
@@ -263,3 +316,5 @@ wl2_all_2023_timeprep %>%
 ```
 
 ## P Matrix 
+
+
