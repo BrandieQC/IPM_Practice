@@ -94,27 +94,78 @@ pop_predictions
 surv_models_fixed <- tribble(
   ~name,          ~f,
   "1_intercept",              "surv ~ 1", 
-  "2_linear_size",            "surv ~ height.cm", 
-  "3_linear_pops",            "surv ~ parent.pop",
-  "4_linear_size_pops",       "surv ~ height.cm*parent.pop",
+  "2a_linear_size",           "surv ~ height.cm", 
+  "2b_linear_pops",           "surv ~ parent.pop", 
+  "3a_linear_size_date_char", "surv ~ height.cm*survey_date_char",
+  "3b_linear_pops_date_char", "surv ~ parent.pop*survey_date_char",
+  "3c_linear_pops_date",      "surv ~ parent.pop*survey_date",
+  "3d_linear_pops_date",      "surv ~ parent.pop*survey_date",
+  "3e_linear_size_pops",      "surv ~ height.cm*parent.pop",
+  "4a_linear_size_pops_date_char", "surv ~ height.cm*parent.pop + height.cm*survey_date_char + parent.pop*survey_date_char",
+  "4b_linear_size_pops_date", "surv ~ height.cm*parent.pop + height.cm*survey_date + parent.pop*survey_date",
   "5_quadratic_size",         "surv ~ height.cm + I(height.cm^2)", 
   "6_cubic_size",             "surv ~ height.cm + I(height.cm^2) + I(height.cm^3)",
-  "7_quadratic_size_pops",    "surv ~ height.cm*parent.pop + I(height.cm^2)", 
-  "8_cubic_size_pops",        "surv ~ height.cm*parent.pop + I(height.cm^2) + I(height.cm^3)"
+  "7a_quadratic_size_pops",    "surv ~ height.cm*parent.pop + I(height.cm^2)",
+  "8a_cubic_size_pops",        "surv ~ height.cm*parent.pop + I(height.cm^2) + I(height.cm^3)",
+  "9a_quadratic_full_survey_date_char", "surv ~ height.cm*parent.pop*survey_date_char + I(height.cm^2)", 
+  "9b_quadratic_full_survey_date",  "surv ~ height.cm*parent.pop*survey_date + I(height.cm^2)",
+  "10a_cubic_full_survey_date_char", "surv ~ height.cm*parent.pop*survey_date_char + I(height.cm^2) + I(height.cm^3)",
+  "10b_cubic_full_survey_date", "surv ~ height.cm*parent.pop*survey_date + I(height.cm^2) + I(height.cm^3)"
 )
+
 
 #run the models 
 surv_models_fixed <- surv_models_fixed %>%
-  mutate(glm = map(f, ~ glm(as.formula(.), data = wl2_all_2023_timeprep, family = "binomial")), #run the models 
+  mutate(glm = map(f, ~ glm(as.formula(.), 
+                            data = wl2_all_2023_timeprep, 
+                            family = "binomial")), #run the models 
          predict = map(glm, predict, type = "response"), # predicting from original data...
         # type = response is for glm models, back transforms probabilities from logit scale 
          glance = map(glm, glance)) #glance at the model results
 
 surv_models_fixed %>% select(-f, -glm) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
-#Cubic_size seems best, but what we really want is a model for each survey date, right?
+surv_models_fixed %>% select(-f, -glm) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 
+
+#Linear with size and date as a character seems best 
 ```
 
-Attempt at pop = random - currently not working
+```{r}
+survival.model.final <- surv_models_fixed %>% filter(name == "3a_linear_size_date_char") %>% pull(glm) %>% magrittr::extract2(1)
+summary(survival.model.final)
+```
+
+### Predicted vs. Observed Survival 
+Calculate predictions 
+```{r}
+survival_curves <- wl2_all_2023_timeprep %>%
+  group_by(survey_date_char) %>%
+  summarize(minSize = min(height.cm, na.rm = TRUE),
+            maxSize = max(height.cm, na.rm = TRUE)) %>%
+  
+  # generate a "newdata" data frame for each date
+  mutate(newdata = pmap(list(survey_date_char, minSize, maxSize), \(d, x, y) tibble(survey_date_char = d,
+                                                        height.cm = seq(x, y, length.out = 101)))) %>%
+
+ # predictions for each date
+  mutate(surv = map(newdata, \(nd) predict(survival.model.final, newdata = nd, type = "response"))) %>%
+  
+  select(-survey_date_char) %>%
+
+  # unnest to plot
+  unnest(cols = c(newdata, surv), names_repair = "minimal") 
+
+survival_curves
+```
+
+```{r}
+wl2_all_2023_timeprep %>%
+  ggplot(aes(x=height.cm, y = surv)) +
+  geom_point() +
+  geom_line(color = "red", data = survival_curves) +
+  facet_wrap(~survey_date_char, scales = "free_x")
+```
+
+## Attempt at pop = random - currently not working
 ```{r, eval=FALSE}
 surv.models_random <- tibble(
   name=c("1_linear_pops", "2_linear_size_pops", "3_quadratic", "4_cubic"), #names of the different models
@@ -133,32 +184,6 @@ surv.models_random <- surv.models_random %>%
        #  glance = map(glmer, glance)) #glance at the model results
 ```
 
-```{r}
-survival.model.final <- surv_models_fixed %>% filter(name == "6_cubic_size") %>% pull(glm) %>% magrittr::extract2(1)
-summary(survival.model.final)
-```
-
-### Predicted vs. Observed Survival 
-```{r}
-plot_surv <- function(x, m=survival.model.final) {
-  predict(m, newdata = tibble(height.cm = x), type = "response")
-}
-
-wl2_all_2023_timeprep %>%
-  ggplot(aes(x=height.cm, y = surv)) +
-  geom_point(alpha=.1) + 
-  geom_function(fun = plot_surv, color = "red") + 
-  facet_wrap(~ parent.pop)
-#something clearly didn't work here. The predictions start at 0.5 surv rather than 0...
-
-#plot all pops on same plot:
-wl2_all_2023_timeprep %>%
-  ggplot(aes(x=height.cm, y = surv)) +
-  geom_point(aes(color = parent.pop), alpha=.1) + 
-  geom_function(fun = plot_surv, color = "red") 
-```
-
-
 ## Growth Models
 Observed Patterns
 ```{r}
@@ -176,7 +201,8 @@ wl2_all_2023_timeprep %>%
 growth_models_fixed <- tribble(
   ~name,          ~f,
   "1_intercept",              "height_next ~ 1", 
-  "2_linear_size",            "height_next ~ height.cm", 
+  "2a_linear_size",            "height_next ~ height.cm", 
+  "2b_linear_pops",            "height_next ~ parent.pop",
   "3a_linear_with_weeks",      "height_next ~ elapsed_weeks",
   "3b_linear_with_survey_date_char", "height_next ~ survey_date_char",
   "3c_linear_with_survey_date", "height_next ~ survey_date",
@@ -223,5 +249,17 @@ wl2_all_2023_timeprep %>%
 #looks decent for most pops
 ```
 
+```{r}
+wl2_all_2023_timeprep %>% 
+  drop_na(height.cm, height_next) %>% 
+  cbind(predicted={growth_models_fixed %>% filter(name=="7c_quadratic_full_survey_date") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=height_next, y = predicted)) +
+  geom_point(alpha=.2) +
+  geom_abline(color="skyblue2") +
+  facet_wrap(~parent.pop, scales="free")
+
+#looks decent for most pops
+#don't see much difference between the two models 
+```
 
 ## P Matrix 
