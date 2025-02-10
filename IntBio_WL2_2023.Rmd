@@ -22,7 +22,12 @@ library(lmerTest)
 ## Load the data
 ```{r}
 wl2_size_2023 <- read_csv("data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
-wl2_mort_2023 <- read_csv("data/WL2_Mortality.csv") %>% select(BedLoc, Genotype, parent.pop, death.date)
+unique(wl2_size_2023$parent.pop) #all 23 pops!
+wl2_mort_2023 <- read_csv("data/WL2_Mortality_2023.csv") %>% 
+  select(block, BedLoc, Genotype, parent.pop=pop, death.date) %>% 
+  mutate(parent.pop= str_replace(parent.pop, "Y08", "YO8")) %>% 
+  mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4")) 
+unique(wl2_mort_2023$parent.pop) #all 23 pops!
 ```
 
 ## Merge
@@ -30,9 +35,9 @@ wl2_mort_2023 <- read_csv("data/WL2_Mortality.csv") %>% select(BedLoc, Genotype,
 wl2_all_2023_OLD <- left_join(wl2_size_2023, wl2_mort_2023) #42 more rows, why? duplicate rows somewhere 
 wl2_all_2023_OLD %>% group_by(Genotype, survey_date) %>% summarize(n=n()) %>% arrange(desc(n)) 
 ##Duplicates: CC_1_2, CC_9_6, IH_4_5, SC_5_6, SQ2_6_2
-wl2_size_2023 %>% filter(Genotype=="CC_1_2") #multiple places on datasheet (K_13_A, K_5_C)
+wl2_size_2023 %>% filter(Genotype=="CC_1_2") #duplicated on certain dates  
 wl2_size_2023 %>% filter(Genotype=="CC_9_6") #duplicated on certain dates  
-wl2_size_2023 %>% filter(Genotype=="IH_4_5") #duplicated on certain dates  --- multiple places (B_22_B, B_32_A)
+wl2_size_2023 %>% filter(Genotype=="IH_4_5") #duplicated on certain dates  
 wl2_size_2023 %>% filter(Genotype=="SC_5_6") #duplicated on certain dates  
 wl2_size_2023 %>% filter(Genotype=="SQ2_6_2") #duplicated on certain dates  
 
@@ -43,39 +48,43 @@ wl2_size_2023 %>% filter(Genotype=="SQ2_6_2") #duplicated on certain dates
 wl2_size_2023_merge_prep <- wl2_size_2023 %>% 
   arrange(Genotype, survey_date, height.cm) %>% 
   distinct(Genotype, survey_date, .keep_all=TRUE)
-  
-wl2_mort_2023_merge_prep <- wl2_mort_2023 %>% 
-  filter(BedLoc != "B_32_A", BedLoc !="K_5_C")
 
 #Merge with corrections 
-wl2_all_2023 <- left_join(wl2_size_2023_merge_prep, wl2_mort_2023_merge_prep)
+wl2_all_2023 <- left_join(wl2_size_2023_merge_prep, wl2_mort_2023)
 tail(wl2_all_2023, 10)
 unique(wl2_all_2023$death.date)
 ```
 
 ## Add in surv and sizenext columns
 ```{r}
-wl2_all_2023 <- wl2_all_2023 %>% 
+wl2_all_2023_timeprep <- wl2_all_2023 %>% 
   mutate(death.date=mdy(death.date)) %>% 
   group_by(Genotype) %>% 
   mutate(height_next = lead(height.cm, order_by = survey_date), #next timepoints height
          long.leaf_next = lead(long.leaf.cm, order_by = survey_date), #next timepoints leaf length 
-         date_next = lead(survey_date, order_by = survey_date), #needed for surv code 
+         survey_date_char = as.character(survey_date), #grouping variable to compare to continuous survey date 
+         date_next = lead(survey_date, order_by = survey_date), #needed for surv code and interval calc
+         elapsed_days= date_next - survey_date, #interval length in days
+         elapsed_weeks = as.integer(elapsed_days)/7, #interval length in weeks 
          surv=if_else(is.na(death.date), 1,
-                      if_else(date_next>=death.date, 0, 1))) #survival to the next time point 
+                      if_else(date_next>=death.date, 0, 1))) %>% #survival to the next size time point
+  ungroup() %>%
+  drop_na(height.cm, height_next) #for models
          
-wl2_all_2023 %>% arrange(Genotype, survey_date)
+wl2_all_2023_timeprep %>% arrange(Genotype, survey_date)
 
-wl2_all_2023_nest <-wl2_all_2023 %>% ungroup() %>% nest(.by=survey_date)
+unique(wl2_all_2023_timeprep$elapsed_days) #mostly 1 or 2 weeks. 20 or 23 days from initial size measurements on campus to field measurements 
+
+#wl2_all_2023_nest <- wl2_all_2023_timeprep %>% ungroup() %>% nest(.by=survey_date)
 ```
 
-## Survival Models - Using height is the main size estimte here 
+## Survival Models - Using height as the main size estimte here 
 ```{r}
 #create dataframe to bind predictions to, this will be used for all model fitting
-pop_predictions <- wl2_all_2023 %>% ungroup() %>% select(parent.pop) %>% distinct() %>%  #get pop ids
+pop_predictions <- wl2_all_2023_timeprep %>% select(parent.pop) %>% distinct() %>%  #get pop ids
   group_by(parent.pop) %>% 
-  expand(height.cm=seq(min(wl2_all_2023$height.cm, na.rm = TRUE),
-                          max(wl2_all_2023$height.cm, na.rm = TRUE),
+  expand(height.cm=seq(min(wl2_all_2023_timeprep$height.cm, na.rm = TRUE),
+                          max(wl2_all_2023_timeprep$height.cm, na.rm = TRUE),
                           length.out=1001)) 
 pop_predictions
 ```
@@ -96,7 +105,7 @@ surv_models_fixed <- tribble(
 
 #run the models 
 surv_models_fixed <- surv_models_fixed %>%
-  mutate(glm = map(f, ~ glm(as.formula(.), data = wl2_all_2023, family = "binomial")), #run the models 
+  mutate(glm = map(f, ~ glm(as.formula(.), data = wl2_all_2023_timeprep, family = "binomial")), #run the models 
          predict = map(glm, predict, type = "response"), # predicting from original data...
         # type = response is for glm models, back transforms probabilities from logit scale 
          glance = map(glm, glance)) #glance at the model results
@@ -118,7 +127,7 @@ surv.models_random <- tibble(
 #run the models 
 surv.models_random <- surv.models_random %>%
   mutate(glm = map(f, ~ glmer(as.formula(.), 
-                            data = wl2_all_2023, family = "binomial"))) #, #run the models 
+                            data = wl2_all_2023_timeprep, family = "binomial"))) #, #run the models 
          #predict = map(glmer, ~ cbind(predictions, surv=predict(., predictions, type = "response"))), #put predictions generated from the models into the "predictions" dataframe 
          #type = response is for glm models, back transforms probabilities from logit scale 
        #  glance = map(glmer, glance)) #glance at the model results
@@ -135,7 +144,7 @@ plot_surv <- function(x, m=survival.model.final) {
   predict(m, newdata = tibble(height.cm = x), type = "response")
 }
 
-wl2_all_2023 %>%
+wl2_all_2023_timeprep %>%
   ggplot(aes(x=height.cm, y = surv)) +
   geom_point(alpha=.1) + 
   geom_function(fun = plot_surv, color = "red") + 
@@ -143,7 +152,7 @@ wl2_all_2023 %>%
 #something clearly didn't work here. The predictions start at 0.5 surv rather than 0...
 
 #plot all pops on same plot:
-wl2_all_2023 %>%
+wl2_all_2023_timeprep %>%
   ggplot(aes(x=height.cm, y = surv)) +
   geom_point(aes(color = parent.pop), alpha=.1) + 
   geom_function(fun = plot_surv, color = "red") 
@@ -153,10 +162,13 @@ wl2_all_2023 %>%
 ## Growth Models
 Observed Patterns
 ```{r}
-wl2_all_2023 %>% 
+wl2_all_2023_timeprep %>% 
+  #filter(elapsed_days==7) %>% 
   ggplot(aes(x=height.cm, y=height_next)) +
   geom_point(aes(color = parent.pop), alpha=.1)  +
-  scale_color_viridis_d(end = 0.9)
+  scale_color_viridis_d(end = 0.9) + 
+  geom_abline() +
+  geom_smooth(method = "lm")
 ```
 
 
@@ -165,22 +177,32 @@ growth_models_fixed <- tribble(
   ~name,          ~f,
   "1_intercept",              "height_next ~ 1", 
   "2_linear_size",            "height_next ~ height.cm", 
-  "3_linear_pops",            "height_next ~ parent.pop",
-  "4_linear_size_pops",       "height_next ~ height.cm*parent.pop",
+  "3a_linear_with_weeks",      "height_next ~ elapsed_weeks",
+  "3b_linear_with_survey_date_char", "height_next ~ survey_date_char",
+  "3c_linear_with_survey_date", "height_next ~ survey_date",
+  "4a_linear_with_weeks_pops_2way", "height_next ~ height.cm*elapsed_weeks + height.cm*parent.pop + elapsed_weeks*parent.pop",
+  "4b_linear_with_survey_date_char_pops_2way", "height_next ~ height.cm*survey_date_char + height.cm*parent.pop + survey_date_char*parent.pop",
+  "4c_linear_with_survey_date_pops_2way", "height_next ~ height.cm*survey_date + height.cm*parent.pop + survey_date*parent.pop",
   "5_quadratic_size",         "height_next ~ height.cm + I(height.cm^2)", 
   "6_cubic_size",             "height_next ~ height.cm + I(height.cm^2) + I(height.cm^3)",
-  "7_quadratic_size_pops",    "height_next ~ height.cm*parent.pop + I(height.cm^2)", 
-  "8_cubic_size_pops",        "height_next ~ height.cm*parent.pop + I(height.cm^2) + I(height.cm^3)"
+  "7a_quadratic_full_weeks",    "height_next ~ height.cm*parent.pop*elapsed_weeks + I(height.cm^2)", 
+  "7b_quadratic_full_survey_date_char",    "height_next ~ height.cm*parent.pop*survey_date_char + I(height.cm^2)", 
+  "7c_quadratic_full_survey_date",    "height_next ~ height.cm*parent.pop*survey_date + I(height.cm^2)", 
+  "8a_cubic_full_weeks",        "height_next ~ height.cm*parent.pop*elapsed_weeks + I(height.cm^2) + I(height.cm^3)",
+  "8b_cubic_full_survey_date_char",        "height_next ~ height.cm*parent.pop*survey_date_char + I(height.cm^2) + I(height.cm^3)",
+  "8c_cubic_full_survey_date",        "height_next ~ height.cm*parent.pop*survey_date + I(height.cm^2) + I(height.cm^3)"
 )
 
 #run the models 
 growth_models_fixed <- growth_models_fixed %>%
-  mutate(lm = map(f, ~ lm(as.formula(.), data = wl2_all_2023, family = "binomial")), #run the models 
+  mutate(lm = map(f, ~ lm(as.formula(.), data = wl2_all_2023_timeprep)), #run the models 
          predict = map(lm, predict), # predicting from original data...
          glance = map(lm, glance)) #glance at the model results
 
 growth_models_fixed %>% select(-f, -lm) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
-#cubic size with pops included seems to be the best
+growth_models_fixed %>% select(-f, -lm) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 
+#quadratic with 3way with survey_date as continuous wins by BIC
+#cubic with 3way with survey date as character wins by AIC ... Rsquared higher for this model too
 ```
 
 ```{r}
@@ -190,7 +212,7 @@ summary(growth.model.final)
 
 ### Predicted vs. Observed Growth
 ```{r}
-wl2_all_2023 %>% 
+wl2_all_2023_timeprep %>% 
   drop_na(height.cm, height_next) %>% 
   cbind(predicted={growth_models_fixed %>% filter(name=="8_cubic_size_pops") %>% pull(predict) %>% unlist()}) %>%
   ggplot(aes(x=height_next, y = predicted)) +
