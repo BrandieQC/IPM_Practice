@@ -206,7 +206,7 @@ growth_models_fixed %>% select(-f, -lm) %>% unnest(glance) %>% arrange(AIC) #loo
 ```
 
 ```{r}
-growth.model.final <- growth_models_fixed %>% filter(name == "8_cubic_size_pops") %>% pull(lm) %>% magrittr::extract2(1)
+growth.model.final <- growth_models_fixed %>% filter(name == "8b_cubic_full_survey_date_char") %>% pull(lm) %>% magrittr::extract2(1)
 summary(growth.model.final)
 ```
 
@@ -214,7 +214,7 @@ summary(growth.model.final)
 ```{r}
 wl2_all_2023_timeprep %>% 
   drop_na(height.cm, height_next) %>% 
-  cbind(predicted={growth_models_fixed %>% filter(name=="8_cubic_size_pops") %>% pull(predict) %>% unlist()}) %>%
+  cbind(predicted={growth_models_fixed %>% filter(name=="8b_cubic_full_survey_date_char") %>% pull(predict) %>% unlist()}) %>%
   ggplot(aes(x=height_next, y = predicted)) +
   geom_point(alpha=.2) +
   geom_abline(color="skyblue2") +
