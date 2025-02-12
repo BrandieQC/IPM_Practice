@@ -27,8 +27,17 @@ unique(wl2_size_2023$parent.pop) #all 23 pops!
 wl2_mort_2023 <- read_csv("data/WL2_Mortality_2023.csv") %>% 
   select(block, BedLoc, Genotype, parent.pop=pop, mf:death.date) %>% 
   mutate(parent.pop= str_replace(parent.pop, "Y08", "YO8")) %>% 
-  mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4")) 
+  mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4")) %>% 
+mutate(Genotype= str_replace(Genotype, "Y08", "YO8")) %>% 
+  mutate(Genotype= str_replace(Genotype, "Y04", "YO4")) 
 unique(wl2_mort_2023$parent.pop) #all 23 pops!
+
+#wl2_size_2023 %>% filter(Genotype=="YO4_2_2") #I_18_C
+#wl2_size_2023 %>% filter(Genotype=="YO8_8_4") #B_58_A
+
+#wl2_mort_2023 %>% filter(Genotype=="YO4_2_2")
+#wl2_mort_2023 %>% filter(BedLoc=="I_18_C")
+#wl2_mort_2023 %>% filter(BedLoc=="B_58_A")
 ```
 
 ## Merge
@@ -49,12 +58,15 @@ wl2_size_2023 %>% filter(Genotype=="SQ2_6_2") #duplicated on certain dates
 wl2_size_2023_merge_prep <- wl2_size_2023 %>% 
   arrange(Genotype, survey_date, height.cm) %>% 
   distinct(Genotype, survey_date, .keep_all=TRUE)
+wl2_size_2023_merge_prep %>% filter(Genotype=="YO4_2_2")
 
 #Merge with corrections 
 wl2_all_2023 <- left_join(wl2_size_2023_merge_prep, wl2_mort_2023) %>%
-  select(survey_date:parent.pop, mf:rep,block:BedLoc, height.cm, long.leaf.cm, death.date)
+  select(survey_date:parent.pop, mf:rep,block:BedLoc, height.cm, long.leaf.cm, death.date) %>% 
+  drop_na(block) #get rid of plants that were not planted and never got a block assigned. 
 tail(wl2_all_2023, 10)
 unique(wl2_all_2023$death.date)
+
 ```
 
 ## Add in surv and sizenext columns
