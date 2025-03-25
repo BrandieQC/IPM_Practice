@@ -2,7 +2,12 @@
 title: "IntBio_WL2_2023"
 author: "Brandie QC"
 date: "`r Sys.Date()`"
-output: html_document
+output: 
+  html_document: 
+    keep_md: true
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
 ```{r setup, include=FALSE}
@@ -11,7 +16,13 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Make a practice IPM with WL2 2023 Data
 
+To Do:
+
+-   Check P matrix since I ran the models with scaled and transformed data, but did not account for that when making the P matrix 
+-   Make a separate P matrix for each pop to take into account random slopes
+
 ## Libraries
+
 ```{r}
 library(tidyverse)
 library(broom)
@@ -21,6 +32,7 @@ library(lmerTest)
 ```
 
 ## Load the data
+
 ```{r}
 wl2_size_2023 <- read_csv("data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
 unique(wl2_size_2023$parent.pop) #all 23 pops!
@@ -41,6 +53,7 @@ unique(wl2_mort_2023$parent.pop) #all 23 pops!
 ```
 
 ## Merge
+
 ```{r}
 wl2_all_2023_OLD <- left_join(wl2_size_2023, wl2_mort_2023) #42 more rows, why? duplicate rows somewhere 
 wl2_all_2023_OLD %>% group_by(Genotype, survey_date) %>% summarize(n=n()) %>% arrange(desc(n)) 
@@ -70,31 +83,68 @@ unique(wl2_all_2023$death.date)
 ```
 
 ## Add in surv and sizenext columns
+
 ```{r}
 wl2_all_2023_timeprep <- wl2_all_2023 %>% 
+  select(-long.leaf.cm) %>% 
   mutate(death.date=mdy(death.date)) %>% 
   group_by(Genotype) %>% 
   mutate(height_next = lead(height.cm, order_by = survey_date), #next timepoints height
-         long.leaf_next = lead(long.leaf.cm, order_by = survey_date), #next timepoints leaf length 
-         survey_date_char = as.character(survey_date), #grouping variable to compare to continuous survey date 
+        # survey_date_char = as.character(survey_date), #grouping variable to compare to continuous survey date 
          date_next = lead(survey_date, order_by = survey_date), #needed for surv code and interval calc
          elapsed_days= date_next - survey_date, #interval length in days
          elapsed_weeks = as.integer(elapsed_days)/7, #interval length in weeks 
          surv=if_else(is.na(death.date), 1,
                       if_else(date_next>=death.date, 0, 1))) %>% #survival to the next size time point
   ungroup() %>%
+  mutate(week = as.numeric(survey_date - ymd("2023-07-03")), #Weeks since pre-transplant size 
+         pop.mf=str_c(parent.pop, "_", mf)) %>% #for specifying random effects separately  
   drop_na(height.cm, height_next, surv) #for models
          
-wl2_all_2023_timeprep %>% arrange(Genotype, survey_date)
+#wl2_all_2023_timeprep %>% arrange(Genotype, survey_date)
 
 unique(wl2_all_2023_timeprep$elapsed_days) #mostly 1 or 2 weeks. 20 or 23 days from initial size measurements on campus to field measurements 
-
-#wl2_all_2023_nest <- wl2_all_2023_timeprep %>% ungroup() %>% nest(.by=survey_date)
+unique(wl2_all_2023_timeprep$week)
+unique(wl2_all_2023_timeprep$block)
+unique(wl2_all_2023_timeprep$parent.pop)
+unique(wl2_all_2023_timeprep$pop.mf)
 ```
 
-## Survival Models - Using height as the main size estimte here 
+### Scaling and transformations
 
 ```{r}
+summary(wl2_all_2023_timeprep)
+wl2_all_2023_timeprep %>%  #pretty skewed
+  ggplot(aes(x=height_next)) +
+  geom_histogram()
+
+wl2_all_2023_timeprep_scaled <- wl2_all_2023_timeprep %>% 
+  mutate(logHeight_next=log(height_next)) %>%  #transform the independent variable to be more normal
+  mutate_at(c("height.cm","week","elapsed_weeks"), scale) #scale the predictors height.cm + week + elapsed_weeks
+
+wl2_all_2023_timeprep_scaled %>% #better
+  ggplot(aes(x=logHeight_next)) +
+  geom_histogram()
+```
+
+## Survival Models
+
+Using height as the main size estimate here
+
+Notes:
+
+-   Treating time as a factor not a good idea since we want the models
+    to be predictive in other years
+
+    -   Weekly climate variation will be accounted for when we include
+        weekly climate data
+
+    -   Time as a random effect in weekly climate models? (to account
+        for week to week variance).
+
+### Fixed models
+
+```{r, eval=FALSE}
 surv_models_fixed <- tribble(
   ~name,          ~f,
   "1_intercept",              "surv ~ 1", 
@@ -133,14 +183,16 @@ surv_models_fixed %>% select(-f, -glm) %>% unnest(glance) %>% arrange(AIC) #look
 #Linear with size and date as a character seems best 
 ```
 
-```{r}
+```{r, eval=FALSE}
 survival.model.final <- surv_models_fixed %>% filter(name == "3a_linear_size_date_char") %>% pull(glm) %>% magrittr::extract2(1)
 summary(survival.model.final)
 ```
 
-### Predicted vs. Observed Survival 
-Calculate predictions 
-```{r}
+#### Predicted vs. Observed Survival
+
+Calculate predictions
+
+```{r, eval=FALSE}
 survival_curves <- wl2_all_2023_timeprep %>%
   group_by(survey_date_char) %>%
   summarize(minSize = min(height.cm, na.rm = TRUE),
@@ -161,7 +213,7 @@ survival_curves <- wl2_all_2023_timeprep %>%
 survival_curves
 ```
 
-```{r}
+```{r, eval=FALSE}
 wl2_all_2023_timeprep %>%
   ggplot(aes(x=height.cm, y = surv)) +
   geom_point() +
@@ -169,88 +221,83 @@ wl2_all_2023_timeprep %>%
   facet_wrap(~survey_date_char, scales = "free_x")
 ```
 
-## Attempt at pop = random for Survival 
+### Models with random effects
+
 ```{r}
 surv.models_random <- tribble(
   ~name,          ~f,
-  "1a_intercept_block",              "surv ~ 1 + (1|block)", 
-  "1b_intercept_pop",              "surv ~ 1 + (1|parent.pop)", 
-  "1c_intercept_pop_mf",              "surv ~ 1 + (1|parent.pop/mf)", 
-  "1d_intercept__pop_mf_block",              "surv ~ 1 + (1|block) + (1|parent.pop/mf)", 
-  "2a_linear_size_block",           "surv ~ height.cm + (1|block)", 
-  "2b_linear_size_pops",           "surv ~ height.cm + (1|parent.pop)",   "2c_linear_size_pops_mf",           "surv ~ height.cm + (1|parent.pop/mf)",
-  "2d_linear_size_pops_mf_block",           "surv ~ height.cm + (1|block) + (1|parent.pop/mf)", 
-  "3a_linear_size_date_char", "surv ~ height.cm*survey_date_char + (1|block) + (1|parent.pop/mf)",
-  #"3b_linear_size_date",      "surv ~ height.cm*survey_date + (1|block) + (1|parent.pop/mf)",
- #Caused by error:! (maxstephalfit) PIRLS step-halvings failed to reduce deviance in pwrssUpdate
-  "5_quadratic_size",         "surv ~ height.cm + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
-  "6_cubic_size",             "surv ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
-  "9a_quadratic_full_survey_date_char", "surv ~ height.cm*survey_date_char + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
-  #"9b_quadratic_full_survey_date",  "surv ~ height.cm*survey_date + I(height.cm^2) + (1|block) + (1|parent.pop/mf)",
- #Caused by error:! (maxstephalfit) PIRLS step-halvings failed to reduce deviance in pwrssUpdate
-  #"10a_cubic_full_survey_date_char", "surv ~ height.cm*survey_date_char + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
- #Caused by error:! pwrssUpdate did not converge in (maxit) iterations
-  #"10b_cubic_full_survey_date", "surv ~ height.cm*survey_date + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)"
- #Caused by error:! (maxstephalfit) PIRLS step-halvings failed to reduce deviance in pwrssUpdate
+  "1a_intercept_pop_mf_block",     "surv ~ 1 + (1|parent.pop/mf) + (1|block)", 
+  "1b_intercept_pop_mf_block2",    "surv ~ 1 + (1|parent.pop) + (1|pop.mf) + (1|block)",  #should be the same as above 
+  "2_linear_size_pops_mf_block",   "surv ~ height.cm + (1|block) + (1|parent.pop/mf)", 
+  "3_linear_weeks",                "surv ~ height.cm + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "4_linear_elapsed_weeks",        "surv ~ height.cm + elapsed_weeks + (1|block) + (1|parent.pop/mf)",
+  "5_linear_weeks_all",            "surv ~ height.cm + elapsed_weeks + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "6a_quadratic_size",             "surv ~ height.cm + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
+  "6b_quadratic_size_weeks",       "surv ~ height.cm + I(height.cm^2) + (1|week) + (1|block) + (1|parent.pop/mf)", 
+  "7a_cubic_size",                 "surv ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
+  "7a_cubic_size_weeks",           "surv ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "8a_linear_slope_pop",           "surv ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|block)",
+  #"8b_linear_slope_popmf",        "surv ~ height.cm + (1|block) + (height.cm|parent.pop/mf)",
+  #"8c_linear_slope_all",          "surv ~ height.cm + (height.cm|block) + (height.cm|parent.pop/mf)",
+  "8d_linear_slope_pop_week",      "surv ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|week) + (1|block)" #,
+  #"9_quad_slope",                 "surv ~ height.cm + I(height.cm^2) + (1|block) + (1|pop.mf) + (height.cm+I(height.cm^2)|parent.pop)"
 )
 
 #run the models 
+#mod_test <- glmer(surv ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|week) + (1|block), family="binomial", data=wl2_all_2023_timeprep_scaled)
+#boundary (singular) fit: see help('isSingular') - linear slope pop & linear slope pop w/ week
+#Warning: Model failed to converge with max|grad| = 0.0897006 (tol = 0.002, component 1)Warning: Model is nearly unidentifiable: very large eigenvalue
+ # - Rescale variables? - linear slope popmf
+#Warning: Model failed to converge with max|grad| = 0.092552 (tol = 0.002, component 1)Warning: Model is nearly unidentifiable: very large eigenvalue
+ #- Rescale variables? - linear slope all 
+#Warning: Model failed to converge with max|grad| = 0.0116387 (tol = 0.002, component 1) - quad slope
+
 surv.models_random <- surv.models_random %>%
   mutate(glmer = map(f, ~ glmer(as.formula(.), 
-                            data = wl2_all_2023_timeprep, 
+                            data = wl2_all_2023_timeprep_scaled, 
                             family = "binomial")), #, #run the models 
-         predict = map(glmer, predict, type = "response"), 
+         predict = map(glmer, predict, type = "response", re.form = ~ (1|parent.pop)), 
          glance = map(glmer, tidy),
          AIC = map(glmer, AIC),
          BIC = map(glmer, BIC)) #glance at the model results
 
-surv.models_random %>% select(-f, -glmer, -predict) %>% unnest(glance) 
+surv.models_random %>% select(-f, -glmer, -predict) %>% filter(name=="1a_intercept_pop_mf_block" | name=="1b_intercept_pop_mf_block2") %>% unnest(glance) #first two models are the same as expected 
 surv.models_random %>% select(-f, -glmer, -predict) %>% unnest(BIC) %>% arrange(BIC) #look at the model fitting info 
 surv.models_random %>% select(-f, -glmer, -predict) %>% unnest(AIC) %>% arrange(AIC) #look at the model fitting info 
 
-#2a_linear_size_block wins with BIC
-#9a_quadratic_full_survey_date_char wins with AIC
+#3_linear_weeks wins with BIC
+#5_linear_weeks_all wins with AIC - but 3_linear_weeks close behind so go with simpler model 
 ```
 
 ```{r}
-survival.model.final_random <- surv.models_random %>% filter(name == "9a_quadratic_full_survey_date_char") %>% pull(glmer) %>% magrittr::extract2(1)
+survival.model.final_random <- surv.models_random %>% filter(name == "3_linear_weeks") %>% pull(glmer) %>% magrittr::extract2(1)
 summary(survival.model.final_random)
 ```
 
-### Predicted vs. Observed Survival 
-Calculate predictions - currently not working, can't figure out how to include block, pop/mf
-```{r, eval=FALSE}
-survival_curves_random <- wl2_all_2023_timeprep %>%
-  group_by(survey_date_char, block, parent.pop, mf) %>%
-  summarize(minSize = min(height.cm, na.rm = TRUE),
-            maxSize = max(height.cm, na.rm = TRUE)) %>%
+#### Predicted vs. Observed Survival
+
+Note that this is on the scaled data
+
+```{r}
+wl2_all_2023_timeprep_scaled %>% 
+  mutate(pred_fixef = predict(survival.model.final_random, newdata = ., re.form = NA), 
+        pred_ranef = predict(survival.model.final_random, newdata = ., re.form = ~(1|parent.pop))) %>% 
+  ggplot(aes(x = height.cm, y = surv)) +
+  geom_point(alpha=.2) +
+  geom_line(aes(y = pred_fixef), 
+            color = "blue", 
+            size = 1.2, alpha=0.5) +
+  geom_line(aes(y = pred_ranef), 
+            color = "green", 
+            size = 1.2, alpha=0.3) +
+  facet_wrap(~parent.pop, scales="free")
   
-  # generate a "newdata" data frame for each date
-  mutate(newdata = pmap(list(survey_date_char, block, parent.pop, mf, minSize, maxSize), \(d, x, y) tibble(survey_date_char = d,
-                                                        height.cm = seq(x, y, length.out = 101)))) %>%
-
- # predictions for each date
-  mutate(surv = map(newdata, \(nd) predict(survival.model.final_random, newdata = nd, type = "response"))) %>%
-  
-  select(-survey_date_char) %>%
-
-  # unnest to plot
-  unnest(cols = c(newdata, surv), names_repair = "minimal") 
-
-survival_curves_random
-```
-
-- currently not working, can't figure out how to include block, pop/mf
-```{r, eval=FALSE}
-wl2_all_2023_timeprep %>%
-  ggplot(aes(x=height.cm, y = surv)) +
-  geom_point() +
-  geom_line(color = "red", data = survival_curves) +
-  facet_wrap(~survey_date_char, scales = "free_x")
 ```
 
 ## Growth Models
-Observed Patterns
+
+### Observed Patterns
+
 ```{r}
 wl2_all_2023_timeprep %>% 
   #filter(elapsed_days==7) %>% 
@@ -261,8 +308,9 @@ wl2_all_2023_timeprep %>%
   geom_smooth(method = "lm")
 ```
 
+### Fixed effects models
 
-```{r}
+```{r, eval=FALSE}
 growth_models_fixed <- tribble(
   ~name,          ~f,
   "1_intercept",              "height_next ~ 1", 
@@ -296,13 +344,14 @@ growth_models_fixed %>% select(-f, -lm) %>% unnest(glance) %>% arrange(AIC) #loo
 #cubic with 3way with survey date as character wins by AIC ... Rsquared higher for this model too
 ```
 
-```{r}
+```{r, eval=FALSE}
 growth.model.final <- growth_models_fixed %>% filter(name == "8b_cubic_full_survey_date_char") %>% pull(lm) %>% magrittr::extract2(1)
 summary(growth.model.final)
 ```
 
-### Predicted vs. Observed Growth
-```{r}
+#### Predicted vs. Observed Growth
+
+```{r, eval=FALSE}
 wl2_all_2023_timeprep %>% 
   cbind(predicted={growth_models_fixed %>% filter(name=="8b_cubic_full_survey_date_char") %>% pull(predict) %>% unlist()}) %>%
   ggplot(aes(x=height_next, y = predicted)) +
@@ -313,7 +362,7 @@ wl2_all_2023_timeprep %>%
 #looks decent for most pops
 ```
 
-```{r}
+```{r, eval=FALSE}
 wl2_all_2023_timeprep %>% 
   cbind(predicted={growth_models_fixed %>% filter(name=="7c_quadratic_full_survey_date") %>% pull(predict) %>% unlist()}) %>%
   ggplot(aes(x=height_next, y = predicted)) +
@@ -325,124 +374,132 @@ wl2_all_2023_timeprep %>%
 #don't see much difference between the two models 
 ```
 
-## Attempt at pop = random for Growth 
+### Random effects for Growth
+
+Notes:
+
+-   one direction would be to test a bunch of things, find what works
+    best, then add complexity to those to see if it makes a difference
+
+-   alternative would be to start with all the random effects based on
+    the exptal design and then add complexity
+
+-   could also do (height.cm + elapsed_weeks\|parent.pop)
+
 ```{r}
 growth_models_random <- tribble(
   ~name,          ~f,
-  "1a_intercept_block",           "height_next ~ 1 + (1|block)", 
-  "1b_intercept_pop",             "height_next ~ 1 + (1|parent.pop)",
-  "1c_intercept_pop_mf",          "height_next ~ 1 + (1|parent.pop/mf)",
-  "1d_intercept_pop_mf_block",    "height_next ~ 1 + (1|block) +  (1|parent.pop/mf)",
-  "2a_linear_size_block",         "height_next ~ height.cm + (1|block)", 
-  "2b_linear_size_pops",          "height_next ~ height.cm + (1|parent.pop)",
-  "2c_linear_size_pops_mf",       "height_next ~ height.cm + (1|parent.pop/mf)",
-  "2d_linear_size_pops_mf_block", "height_next ~ height.cm + (1|parent.pop)+ (1|block)",
-  "3a_linear_with_weeks",         "height_next ~ elapsed_weeks + (1|block)",
-  "3b_linear_with_survey_date_char", "height_next ~ survey_date_char + (1|block)",
-  "3c_linear_with_survey_date",   "height_next ~ survey_date + (1|block)",
-  "4a_linear_with_weeks_pops_2way", "height_next ~ height.cm*elapsed_weeks + (1|parent.pop)",
-  "4b_linear_with_survey_date_char_pops_2way", "height_next ~ height.cm*survey_date_char + (1|parent.pop)",
-  "4c_linear_with_survey_date_pops_2way", "height_next ~ height.cm*survey_date + (1|parent.pop)",
-  "5_quadratic_size",         "height_next ~ height.cm + I(height.cm^2) + (1|block)", 
-  "6_cubic_size",             "height_next ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|block)",
-  "7a_quadratic_full_weeks",    "height_next ~ height.cm*elapsed_weeks + I(height.cm^2) + (1|block) +  (1|parent.pop/mf)", 
-  "7b_quadratic_full_survey_date_char", "height_next ~ height.cm*survey_date_char + I(height.cm^2) + (1|block) +  (1|parent.pop/mf)", 
-  "7c_quadratic_full_survey_date","height_next ~ height.cm*survey_date + I(height.cm^2) + (1|block) +  (1|parent.pop/mf)", 
-  "8a_cubic_full_weeks",        "height_next ~ height.cm*elapsed_weeks + I(height.cm^2) + I(height.cm^3) + (1|block) +  (1|parent.pop/mf)",
-  "8b_cubic_full_survey_date_char", "height_next ~ height.cm*survey_date_char + I(height.cm^2) + I(height.cm^3) + (1|block) +  (1|parent.pop/mf)",
-  "8c_cubic_full_survey_date",    "height_next ~ height.cm*survey_date + I(height.cm^2) + I(height.cm^3) + (1|block) +  (1|parent.pop/mf)"
+  "1a_intercept_pop_mf_block",      "logHeight_next ~ 1 + (1|block) +  (1|parent.pop/mf)",
+  "1b_intercept_pop_mf_block2",     "logHeight_next ~ 1 + (1|block) +  (1|parent.pop) + (1|pop.mf)", #should be the same as above 
+  "2_linear_size_pops_mf_block",    "logHeight_next ~ height.cm + (1|parent.pop/mf) + (1|block)",
+  "3_linear_weeks",                 "logHeight_next ~ height.cm + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "4a_linear_elapsed_weeks",        "logHeight_next ~ height.cm + elapsed_weeks + (1|block) + (1|parent.pop/mf)",
+  "4b_linear_elapsed_weeks_2way",   "logHeight_next ~ height.cm*elapsed_weeks + (1|block) + (1|parent.pop/mf)",
+  "5_linear_weeks_all",             "logHeight_next ~ height.cm + elapsed_weeks + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "6a_quadratic_size",              "logHeight_next ~ height.cm + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
+  "6b_quadratic_size_weeks",        "logHeight_next ~ height.cm + I(height.cm^2) + (1|week)+ (1|block) + (1|parent.pop/mf)", 
+  "7a_cubic_size",                  "logHeight_next ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
+  "7b_cubic_size_weeks",            "logHeight_next ~ height.cm + I(height.cm^2) + I(height.cm^3) +  (1|week)+ (1|block) + (1|parent.pop/mf)",
+  "8a_linear_slope_pop",            "logHeight_next ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|block)",
+  #"8b_linear_slope_popmf",         "logHeight_next ~ height.cm + (1|block) + (height.cm|parent.pop/mf)",
+  "8c_linear_slope_all",            "logHeight_next ~ height.cm + (height.cm|block) + (height.cm|parent.pop/mf)",
+  "8d_linear_slope_pop_week",       "logHeight_next ~ height.cm + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block)",
+  "9_quad_slope",                 "logHeight_next ~ height.cm + I(height.cm^2) + (1|block) + (1|pop.mf) + (height.cm+I(height.cm^2)|parent.pop)"
 )
 
 #run the models 
+#mod_test <- lmer(logHeight_next ~ height.cm + I(height.cm^2) + (1|block) + (1|pop.mf) + (height.cm+I(height.cm^2)|parent.pop), data=wl2_all_2023_timeprep_scaled)
+#Warning: Model failed to converge with max|grad| = 0.00201127 (tol = 0.002, component 1) - 8b_linear_slope_popmf
+
 growth_models_random <- growth_models_random %>%
-  mutate(lmer = map(f, ~ lmer(as.formula(.), data = wl2_all_2023_timeprep)), #run the models 
-         predict = map(lmer, predict), # predicting from original data...
+  mutate(lmer = map(f, ~ lmer(as.formula(.), data = wl2_all_2023_timeprep_scaled)), #run the models 
+         predict = map(lmer, predict, re.form = ~ (1|parent.pop)), # predicting from original data...
          glance = map(lmer, glance)) #glance at the model results
 
+growth_models_random %>% select(-f, -lmer, -predict) %>% filter(name=="1a_intercept_pop_mf_block" | name=="1b_intercept_pop_mf_block2") %>% unnest(glance) #first two models are the same as expected 
 growth_models_random %>% select(-f, -lmer) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
 growth_models_random %>% select(-f, -lmer) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 
-#8b_cubic_full_survey_date_char wins by BIC and AIC
+#8d_linear_slope_pop_week wins by BIC and AIC
 ```
 
 ```{r}
-growth.model.final_random <- growth_models_random %>% filter(name == "8b_cubic_full_survey_date_char") %>% pull(lmer) %>% magrittr::extract2(1)
-summary(growth.model.final_random)
+growth.model.final_random <- growth_models_random %>% filter(name == "8d_linear_slope_pop_week") %>% pull(lmer) %>% magrittr::extract2(1)
+summary(growth.model.final_random) #positive slope, greater than 1 for height, not negative like Jenny
 ```
 
-### Predicted vs. Observed Growth
+#### Predicted vs. Observed Growth
+
 ```{r}
-wl2_all_2023_timeprep %>% 
-  cbind(predicted={growth_models_random %>% filter(name=="8b_cubic_full_survey_date_char") %>% pull(predict) %>% unlist()}) %>%
-  ggplot(aes(x=height_next, y = predicted)) +
+wl2_all_2023_timeprep_scaled %>% 
+  cbind(predicted={growth_models_random %>% filter(name=="8d_linear_slope_pop_week") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=logHeight_next, y = predicted)) +
   geom_point(alpha=.2) +
   geom_abline(color="skyblue2") +
   facet_wrap(~parent.pop, scales="free")
 
-#looks decent for most pops
+#decent for most pops 
 ```
 
-## P Matrix 
+## P Matrix
 
 #### Make a dataframe to store the parameters (as in App A)
+
 ```{r}
 params=data.frame(
   surv.int=NA, # Intercept from logistic regression of survival
   surv.slope1=NA, # Slope from logistic regression of survival
-  surv.slope2=NA, # Quadratic slope from logistic regression of survival
   growth.int=NA, # Intercept from linear regression of growth
   growth.slope=NA, # Slope from linear regression of growth
-  growth.slope2=NA, # Quadratic Slope from linear regression of growth
-  growth.slope3=NA, # Cubic Slope from linear regression of growth
   growth.sd=NA # Residual sd from the linear regression of growth
 )
 ```
 
-#### Use broom:tidy to create a df with the coef from each model 
+#### Use broom:tidy to create a df with the coef from each model
+
 ```{r}
 surv.coefs <- surv.models_random %>% 
-  filter(name == "9a_quadratic_full_survey_date_char") %>% 
+  filter(name == "3_linear_weeks") %>% 
   mutate(coefs = map(glmer, tidy)) %>% 
   select(name, f, coefs) %>% 
   unnest(coefs) 
 
 params$surv.int <- surv.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
 params$surv.slope1 <- surv.coefs %>% filter(term == "height.cm") %>% pull(estimate)
-params$surv.slope2 <- surv.coefs %>% filter(term == "I(height.cm^2)") %>% pull(estimate)
 ```
 
 ```{r}
 growth.coefs <- growth_models_random %>% 
-  filter(name == "8b_cubic_full_survey_date_char") %>% 
+  filter(name == "8d_linear_slope_pop_week") %>% 
   mutate(coefs = map(lmer, tidy)) %>% 
   select(name, f, coefs) %>% 
   unnest(coefs) 
 
 params$growth.int <- growth.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
 params$growth.slope <- growth.coefs %>% filter(term == "height.cm") %>% pull(estimate)
-params$growth.slope2 <- growth.coefs %>% filter(term == "I(height.cm^2)") %>% pull(estimate)
-params$growth.slope3 <- growth.coefs %>% filter(term == "I(height.cm^3)") %>% pull(estimate)
 
 #Pull sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed sd of residuals.  
-params$growth.sd <- growth_models_random %>% filter(name == "8b_cubic_full_survey_date_char") %>% unnest(glance) %>% pull(sigma)
+params$growth.sd <- growth_models_random %>% filter(name == "8d_linear_slope_pop_week") %>% unnest(glance) %>% pull(sigma)
 ```
 
 #### Define the functions
+
 ```{r}
 # 1. survival probability function
 ##This is inverse logit.  Provides survival probability based on size.
 s.x=function(x,params) {
-  u=exp(params$surv.int + params$surv.slope1*x + params$surv.slope2*x^2)
+  u=exp(params$surv.int + params$surv.slope1*x)
   return(u/(1+u)) 
 }
 
 # 2. growth function
 ## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
 g.yx=function(xp,x,params) {
-  dnorm(xp,mean=params$growth.int+params$growth.slope*x+params$growth.slope*x^2+params$growth.slope*x^3,sd=params$growth.sd)
+  dnorm(xp,mean=params$growth.int+params$growth.slope*x,sd=params$growth.sd)
 }
 ```
 
 #### Define the structure of the IPM
+
 ```{r}
 # the sizes we are integrating over
 minSize<-min(wl2_all_2023_timeprep$height.cm,na.rm=T) 
@@ -456,6 +513,7 @@ h=y[2]-y[1] # step size
 ```
 
 #### Make the matrices (G, S, and P)
+
 ```{r}
 G=h*outer(y,y,g.yx,params=params) # growth matrix
 
@@ -466,6 +524,7 @@ for(i in 1:n) P[,i]=G[,i]*S[i] # growth/survival matrix
 ```
 
 #### Plot the matrix
+
 ```{r}
 P %>% as_tibble() %>%
   set_colnames(y) %>% #column names = each size mesh point 
@@ -481,12 +540,14 @@ P %>% as_tibble() %>%
   theme_bw()
 ```
 
-Check for eviction
-Comparison of predicted survival probability to observed values to test for unintentional eviction. The black line shows the fitted survival model. The red dot shows the column sums of the growth/survival matrix
+Check for eviction Comparison of predicted survival probability to
+observed values to test for unintentional eviction. The black line shows
+the fitted survival model. The red dot shows the column sums of the
+growth/survival matrix
+
 ```{r}
 plot(y,s.x(y,params), #fitted survival model 
      xlab="Size",type="l",
         ylab="Survival Probability",lwd=12)
      points(y,apply(P,2,sum),col="red",lwd=3,cex=.1,pch=19) # column sums 
 ```
-
