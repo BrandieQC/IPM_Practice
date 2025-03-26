@@ -1,7 +1,7 @@
 ---
 title: "IntBio_WL2_2023"
 author: "Brandie QC"
-date: "2025-03-25"
+date: "2025-03-26"
 output: 
   html_document: 
     keep_md: true
@@ -1108,7 +1108,7 @@ growth.coefs <- growth_models_random %>%
   unnest(coefs) 
 
 params$growth.int <- growth.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
-params$growth.slope <- growth.coefs %>% filter(term == "height.cm") %>% pull(estimate)
+params$growth.slope <- growth.coefs %>% filter(term == "height.cm") %>%  pull(estimate) 
 
 #Pull sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed sd of residuals.  
 params$growth.sd <- growth_models_random %>% filter(name == "8d_linear_slope_pop_week") %>% unnest(glance) %>% pull(sigma)
@@ -1128,7 +1128,7 @@ s.x=function(x,params) {
 # 2. growth function
 ## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
 g.yx=function(xp,x,params) {
-  dnorm(xp,mean=params$growth.int+params$growth.slope*x,sd=params$growth.sd)
+  dnorm(xp,mean=exp(params$growth.int)+exp(params$growth.slope*x),sd=exp(params$growth.sd))
 }
 ```
 
