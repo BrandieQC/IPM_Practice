@@ -1,0 +1,679 @@
+---
+title: "IntBio_WL2_2023_Climate"
+author: "Brandie QC"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Incorporate weekly climate into models --> IPM 
+
+To Do:
+
+-   Try tidymodels for cross validation 
+
+-   Add in climate data
+
+    -   Use moisture and temp for the time interval between t and t+1
+
+    -   Keep SWC and Temp in separate models b/c negatively correlated (r>-0.69 for everything except min temp: r=-0.38)
+
+    -   Think about ways to aggregate
+
+        -   See chillR package for Chilling Hours, Chill Units, Chil Portions, Growing Degree Hours, and Growing Degree Days
+
+        -   Tried daily max, min, and avg + diurnal range for temp 
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(multilevelmod)
+library(lmerTest)
+library(broom.mixed)
+library(doMC)
+library(furrr)
+library(modelr)
+library(zoo)
+library(future)
+library(chillR)
+library(corrplot)
+
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+conflicted::conflict_prefer("lag", "dplyr")
+```
+
+## Load the data
+```{r}
+wl2_size_2023 <- read_csv("data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
+unique(wl2_size_2023$parent.pop) #all 23 pops!
+wl2_mort_2023 <- read_csv("data/WL2_Mortality_2023.csv") %>% 
+  select(block, BedLoc, Genotype, parent.pop=pop, mf:death.date) %>% 
+  mutate(parent.pop= str_replace(parent.pop, "Y08", "YO8")) %>% 
+  mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4")) %>% 
+mutate(Genotype= str_replace(Genotype, "Y08", "YO8")) %>% 
+  mutate(Genotype= str_replace(Genotype, "Y04", "YO4")) 
+unique(wl2_mort_2023$parent.pop) #all 23 pops!
+
+#wl2_size_2023 %>% filter(Genotype=="YO4_2_2") #I_18_C
+#wl2_size_2023 %>% filter(Genotype=="YO8_8_4") #B_58_A
+
+#wl2_mort_2023 %>% filter(Genotype=="YO4_2_2")
+#wl2_mort_2023 %>% filter(BedLoc=="I_18_C")
+#wl2_mort_2023 %>% filter(BedLoc=="B_58_A")
+```
+
+## Merge
+
+```{r}
+wl2_all_2023_OLD <- left_join(wl2_size_2023, wl2_mort_2023) #42 more rows, why? duplicate rows somewhere 
+wl2_all_2023_OLD %>% group_by(Genotype, survey_date) %>% summarize(n=n()) %>% arrange(desc(n)) 
+##Duplicates: CC_1_2, CC_9_6, IH_4_5, SC_5_6, SQ2_6_2
+wl2_size_2023 %>% filter(Genotype=="CC_1_2") #duplicated on certain dates  
+wl2_size_2023 %>% filter(Genotype=="CC_9_6") #duplicated on certain dates  
+wl2_size_2023 %>% filter(Genotype=="IH_4_5") #duplicated on certain dates  
+wl2_size_2023 %>% filter(Genotype=="SC_5_6") #duplicated on certain dates  
+wl2_size_2023 %>% filter(Genotype=="SQ2_6_2") #duplicated on certain dates  
+
+#anti_join(wl2_size_2023, wl2_mort_2023) #8 rows in the size dataframe without death date info, probably died at planting 
+#anti_join(wl2_mort_2023, wl2_size_2023)
+
+#GET RID OF DUPLICATES:
+wl2_size_2023_merge_prep <- wl2_size_2023 %>% 
+  arrange(Genotype, survey_date, height.cm) %>% 
+  distinct(Genotype, survey_date, .keep_all=TRUE)
+wl2_size_2023_merge_prep %>% filter(Genotype=="YO4_2_2")
+
+#Merge with corrections 
+wl2_all_2023 <- left_join(wl2_size_2023_merge_prep, wl2_mort_2023) %>%
+  select(survey_date:parent.pop, mf:rep,block:BedLoc, height.cm, long.leaf.cm, death.date) %>% 
+  drop_na(block) #get rid of plants that were not planted and never got a block assigned. 
+tail(wl2_all_2023, 10)
+unique(wl2_all_2023$death.date)
+
+```
+
+## Add in surv and sizenext columns
+
+```{r}
+wl2_all_2023_timeprep <- wl2_all_2023 %>% 
+  select(-long.leaf.cm) %>% 
+  mutate(death.date=mdy(death.date)) %>% 
+  group_by(Genotype) %>% 
+  mutate(height_next = lead(height.cm, order_by = survey_date), #next timepoints height
+        # survey_date_char = as.character(survey_date), #grouping variable to compare to continuous survey date 
+         date_next = lead(survey_date, order_by = survey_date), #needed for surv code and interval calc
+         elapsed_days= date_next - survey_date, #interval length in days
+         elapsed_weeks = as.integer(elapsed_days)/7, #interval length in weeks 
+         surv=if_else(is.na(death.date), 1,
+                      if_else(date_next>=death.date, 0, 1))) %>% #survival to the next size time point
+  ungroup() %>%
+  mutate(week = as.numeric(survey_date - ymd("2023-07-03")), #Weeks since pre-transplant size 
+         pop.mf=str_c(parent.pop, "_", mf)) %>% #for specifying random effects separately  
+  drop_na(height.cm, height_next, surv) #for models
+         
+#wl2_all_2023_timeprep %>% arrange(Genotype, survey_date)
+
+unique(wl2_all_2023_timeprep$elapsed_days) #mostly 1 or 2 weeks. 20 or 23 days from initial size measurements on campus to field measurements 
+unique(wl2_all_2023_timeprep$week)
+unique(wl2_all_2023_timeprep$block)
+unique(wl2_all_2023_timeprep$parent.pop)
+unique(wl2_all_2023_timeprep$pop.mf)
+```
+
+### Scaling and transformations
+```{r}
+summary(wl2_all_2023_timeprep)
+wl2_all_2023_timeprep %>%  #pretty skewed
+  ggplot(aes(x=height_next)) +
+  geom_histogram()
+
+wl2_all_2023_timeprep_scaled <- wl2_all_2023_timeprep %>% 
+  mutate(logHeight_next=log(height_next)) %>%  #transform the independent variable to be more normal
+  mutate_at(c("height.cm","week","elapsed_weeks"), scale) #scale the predictors height.cm + week + elapsed_weeks
+
+wl2_all_2023_timeprep_scaled %>% #better
+  ggplot(aes(x=logHeight_next)) +
+  geom_histogram()
+```
+
+## Add in weekly climate data
+
+```{r}
+swc_raw <- read_csv("data/WL2_2023_Bed_C_Soil_Moisture_Corrected.csv") %>% 
+  mutate(Date_Time=mdy_hm(Date_Time))
+head(swc_raw)
+
+swc_port_avgs <- swc_raw %>% #avg across the probes (all in same bed)
+  rowwise() %>% #for each row...
+  mutate(SWC_port_avg = mean(c_across(-Date_Time))) %>%  #avg across all columns except Date_Time  
+  select(Date_Time, SWC_port_avg) %>%
+  mutate(Date=as.Date(Date_Time)) 
+
+swc_daily_summary <- swc_port_avgs%>%
+  group_by(Date) %>%
+  summarize(
+    Daily_AvgSWC = mean(SWC_port_avg),
+    Daily_MaxSWC = max(SWC_port_avg),
+    Daily_MinSWC = min(SWC_port_avg))
+head(swc_daily_summary)
+summary(swc_daily_summary)
+```
+
+-   Think about how you want to summarize the data.
+
+    -   See chillR package - for chilling and heat 
+
+    -   Diurnal range, photothermal units, hours below or above a
+            threshold, coefficient of variation
+            
+```{r}
+soil_temp_raw <- read_csv("data/WL2_2022_2023_iButton_Data_Corrected.csv") %>% 
+  mutate(Date_Time=mdy_hm(Date_Time))
+head(soil_temp_raw)
+
+unique(soil_temp_raw$Bed) #probes not spread out enough to assign half of the field to one probe and the other half to another...
+#A_2 kind of captures the variance and the trends of the other probes 
+
+soil_temp_bedA <- soil_temp_raw %>% 
+  filter(Bed=="A_2") %>% 
+  separate(Date_Time, into = c("Date", "Time"), sep = " ") %>% 
+   mutate(Date=as.Date(Date)) %>% 
+  select(Bed:Time, SoilTemp)
+
+soil_temp_daily_summary <- soil_temp_bedA %>% 
+  group_by(Date) %>%
+  summarize(
+    Daily_AvgTemp = mean(SoilTemp),
+    Daily_MaxTemp = max(SoilTemp),
+    Daily_MinTemp = min(SoilTemp),
+    Diurnal_Range = Daily_MaxTemp-Daily_MinTemp)
+head(soil_temp_daily_summary)
+summary(soil_temp_daily_summary)
+```
+
+### Visualize trends
+
+```{r}
+swc_daily_summary %>% 
+  ggplot(aes(x=Date, Daily_AvgSWC)) +
+  geom_point()
+
+swc_daily_summary %>% 
+  ggplot(aes(x=Date, Daily_MaxSWC)) +
+  geom_point()
+
+swc_daily_summary %>% 
+  ggplot(aes(x=Date, Daily_MinSWC)) +
+  geom_point()
+```
+
+```{r}
+soil_temp_daily_summary %>% 
+  ggplot(aes(x=Date, Daily_AvgTemp)) +
+  geom_point()
+
+soil_temp_daily_summary %>% 
+  ggplot(aes(x=Date, Daily_MaxTemp)) +
+  geom_point()
+
+soil_temp_daily_summary %>% 
+  ggplot(aes(x=Date, Daily_MinTemp)) +
+  geom_point()
+
+soil_temp_daily_summary %>% 
+  ggplot(aes(x=Date, Diurnal_Range)) +
+  geom_point()
+```
+
+
+## Correlation between temp and swc
+
+-   Check correlation to see if they go in the same model or need to be kept separate 
+
+```{r}
+daily_temp_swc <- full_join(swc_daily_summary, soil_temp_daily_summary) %>% 
+  drop_na() #drop NAs - note you lose some dates for both temp and swc 
+summary(daily_temp_swc)
+
+temp_swc_scaled <- daily_temp_swc %>% select(Daily_AvgSWC:Diurnal_Range) %>% scale() #normalize the data so they're all on the same scale
+#head(temp_swc_scaled)
+cor.norm_tempswc = cor(temp_swc_scaled) #test correlations among the traits
+cor.sig_tempswc <- cor.mtest(temp_swc_scaled, method="pearson") #test significance of corrs
+corrplot(cor.norm_tempswc, type = "upper",
+         tl.srt = 45, p.mat = cor.sig_tempswc$p, 
+         sig.level = 0.05, insig="blank") # a lot of significant correlations! --> keep separate 
+
+cor.norm_tempswc
+#use only daily AVG SWC b/c highly correlated to max and min swc (r > 0.96)
+#avg and max temp highly correlated (r=0.93)
+#max temp and diurnal range highly correlated (r=0.95) --> don't use max temp 
+```
+
+## Merge with size/surv data 
+```{r}
+date_intervals <- wl2_all_2023 %>% 
+  select(survey_date) %>% 
+  distinct() %>% 
+  mutate(prev_date = lag(survey_date, order_by = survey_date)) 
+date_intervals %>% arrange(survey_date)
+```
+
+```{r}
+swc_intervals <- swc_daily_summary %>% 
+  mutate(Interval=if_else(Date>="2023-07-26" & Date<"2023-08-02", 1,
+                                if_else(Date>="2023-08-02" & Date<"2023-08-16", 2,
+                                if_else(Date>="2023-08-16" & Date<"2023-08-23", 3,
+                                if_else(Date>="2023-08-23" & Date<"2023-08-30", 4,
+                                if_else(Date>="2023-08-30" & Date<"2023-09-06", 5,
+                                if_else(Date>="2023-09-06" & Date<"2023-09-13", 6,
+                                if_else(Date>="2023-09-13" & Date<"2023-09-20", 7,
+                                if_else(Date>="2023-09-20" & Date<"2023-09-27", 8,
+                                if_else(Date>="2023-09-27" & Date<"2023-10-13", 9,
+                                if_else(Date>="2023-10-13" & Date<"2023-10-20", 10, NA))))))))))) %>% 
+  select(Date:Daily_AvgSWC, Interval) %>% 
+  group_by(Interval) %>% 
+  filter(!is.na(Interval)) %>% 
+  summarise(meanSWC=mean(Daily_AvgSWC, na.rm=TRUE))
+```
+
+```{r}
+soil_temp_intervals <- soil_temp_daily_summary %>% 
+  mutate(Interval=if_else(Date>="2023-07-26" & Date<"2023-08-02", 1,
+                                                    if_else(Date>="2023-08-02" & Date<"2023-08-16", 2,
+                                                    if_else(Date>="2023-08-16" & Date<"2023-08-23", 3,
+                                                    if_else(Date>="2023-08-23" & Date<"2023-08-30", 4,
+                                                    if_else(Date>="2023-08-30" & Date<"2023-09-06", 5,
+                                                    if_else(Date>="2023-09-06" & Date<"2023-09-13", 6,
+                                                    if_else(Date>="2023-09-13" & Date<"2023-09-20", 7,
+                                                    if_else(Date>="2023-09-20" & Date<"2023-09-27", 8,
+                                                    if_else(Date>="2023-09-27" & Date<"2023-10-13", 9,
+                                                    if_else(Date>="2023-10-13" & Date<"2023-10-20", 10, NA))))))))))) %>% 
+  group_by(Interval) %>% 
+  filter(!is.na(Interval)) %>% 
+  summarise(meanTemp=mean(Daily_AvgTemp, na.rm=TRUE), maxTemp=max(Daily_MaxTemp, na.rm = TRUE), 
+            minTemp=min(Daily_MinTemp, na.rm = TRUE), meanDiurnal_Range=mean(Diurnal_Range, na.rm = TRUE))
+
+```
+
+```{r}
+wl2_all_2023_clim <- wl2_all_2023_timeprep_scaled %>% 
+  mutate(Interval=if_else(survey_date=="2023-07-26", 1,
+                              if_else(survey_date=="2023-08-02", 2,
+                              if_else(survey_date=="2023-08-16", 3,
+                              if_else(survey_date=="2023-08-23", 4,
+                              if_else(survey_date=="2023-08-30", 5,
+                              if_else(survey_date=="2023-09-06", 6,
+                              if_else(survey_date=="2023-09-13", 7,
+                              if_else(survey_date=="2023-09-20", 8,
+                              if_else(survey_date=="2023-09-27", 9,
+                              if_else(survey_date=="2023-10-13", 10, NA))))))))))) %>% 
+  left_join(soil_temp_intervals) %>% 
+  left_join(swc_intervals) %>% 
+  filter(!is.na(Interval))
+head(wl2_all_2023_clim)
+summary(wl2_all_2023_clim)
+names(wl2_all_2023_clim)
+```
+
+## Surv Models with climate
+
+### Set up Recipes and workflows
+
+```{r}
+surv.spec <- linear_reg() %>% 
+  set_engine("glmer", family = "binomial")
+
+surv.rec <- wl2_all_2023_clim %>% 
+  select(surv, height.cm, week, elapsed_weeks, parent.pop:mf, pop.mf, block, meanTemp:meanSWC) %>% 
+  recipe() %>% 
+  update_role(surv, new_role = "outcome") %>% 
+  update_role(c(height.cm, week, elapsed_weeks, parent.pop, mf, pop.mf, block, 
+                contains("mean"), maxTemp, minTemp), new_role = "predictor")
+
+surv.rec.poly <- surv.rec %>% 
+  step_poly(height.cm, degree = 3, keep_original_cols = TRUE)  %>%
+  step_poly(week, degree = 3, keep_original_cols = TRUE) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_rename_at(contains("poly"), fn = \(x) str_replace(x, "_poly_", ".p"))
+
+surv.wflow <- workflow() %>%
+  add_recipe(surv.rec)
+
+surv.wflow.poly <- workflow() %>% add_recipe(surv.rec.poly)
+```
+
+### Models
+```{r}
+#start with best random effects model 
+surv.models <- tibble(wflow=list(
+   m1_linear_weeks = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm + (1|week) + (1|block) + (1|parent.pop/mf)) },
+   m2_min_temp = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm + minTemp + (1|week) + (1|block) + (1|parent.pop/mf))},
+   m3_max_temp = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm + maxTemp + (1|week) + (1|block) + (1|parent.pop/mf))},
+   m4_avg_temp = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm + meanTemp + (1|week) + (1|block) + (1|parent.pop/mf))},
+   m5_diurnal_range = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm + meanDiurnal_Range + (1|week) + (1|block) + (1|parent.pop/mf))},
+   m6_swc = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm + meanSWC + (1|week) + (1|block) + (1|parent.pop/mf))}
+),
+name = names(wflow))
+```
+
+### Fit the models
+```{r}
+system.time( { 
+  surv.models <- surv.models %>%
+    mutate(fit = future_map(wflow, fit, data = drop_na(wl2_all_2023_clim,contains("Temp"), contains("Diurnal"),
+                                                       contains("SWC")),  .progress = TRUE, 
+                            .options = furrr_options(packages = c("workflows", "multilevelmod"))),
+           glance = map(fit, glance)
+    ) 
+})
+
+#one model with convergence issues 
+
+surv.models %>% select(-wflow, -fit) %>% unnest(glance) %>% arrange(BIC)
+```
+
+### Look at the best models 
+```{r}
+surv.models.best <- surv.models %>%
+  unnest(glance) %>%
+  filter(rank(BIC) <= 3 | str_detect(name, "ml1_linear")) %>%
+  arrange(BIC)
+
+surv.models.best %>% select(-wflow, -fit)
+
+surv.models.best %>%
+  pull(fit) 
+```
+
+### Cross fold validation 
+```{r}
+set.seed(1001)
+surv_folds <- vfold_cv(wl2_all_2023_clim, v = 10)
+
+system.time( {  #114.627  secs 
+  surv.models.best <- surv.models.best %>%
+    mutate(resamples = map(wflow, fit_resamples, resamples = surv_folds, control = control_resamples(save_pred = TRUE)))
+})
+#some singularity errors 
+```
+
+```{r}
+surv.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "wide")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  select(-.config) %>%
+  arrange(desc(rsq))
+```
+
+```{r}
+surv.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "long")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  arrange(.metric, mean) %>%
+  select(name, .metric, mean, std_err)
+```
+
+```{r}
+surv.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "long")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  arrange(.metric, mean) %>%
+  select(name, .metric, mean, std_err) %>%
+  ggplot(aes(x=reorder(name, mean), y = mean, ymin=mean-std_err, ymax=mean+std_err, fill = reorder(name, mean))) +
+  geom_col() +
+  geom_errorbar(width = 0.5) +
+  facet_wrap(~.metric, scales = "free_y") +
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank()) +
+  ggtitle("10-fold cross validation") +
+  scale_fill_viridis_d()
+```
+
+```{r}
+surv.model.final <- surv.models.best %>% slice_min(BIC) %>% pull(fit) %>% magrittr::extract2(1)
+#simplest model the best?
+
+surv.model.final <- surv.model.final %>% extract_fit_engine()
+```
+
+
+### Predictions 
+```{r}
+newdata.survival <- wl2_all_2023_clim %>%
+  group_by(parent.pop, week) %>%
+  reframe(height.cm = seq(min(height.cm, na.rm = TRUE),
+                          max(height.cm, na.rm = TRUE),
+                          length.out = 101),
+          elapsed_weeks = 1) %>%
+  filter(parent.pop != "WV")
+
+surv.predictions <- surv.model.final %>%  
+  extract_fit_engine() %>%
+  predict(newdata.survival, type = "response", re.form = ~ (1 | parent.pop)) %>%
+  cbind(newdata.survival, surv=.)
+#Error in UseMethod("extract_fit_engine") : 
+#  no applicable method for 'extract_fit_engine' applied to an object of class "c('glmerMod', 'merMod')"
+
+surv.predictions %>%
+  ungroup() %>%
+  nest(.by = parent.pop) %>% 
+  mutate(plot = map2(data, parent.pop, \(x, pp) {
+    ggplot(x, aes(x=height.cm, y = surv)) +
+      geom_smooth(color = "grey50", lty=3, se = FALSE, method = "gam", data = {wl2_all_2023_clim %>% filter(parent.pop==pp)}) + 
+      geom_line() +
+      facet_wrap(~week, scale = "free_x") +
+      geom_point(alpha = 0.3, data = {wl2_all_2023_clim %>% filter(parent.pop==pp)}) + 
+      ggtitle(pp) +
+      scale_color_brewer(type = "qual", palette = "Accent")
+  })) %>%
+  pull(plot) %>% walk(print)
+```
+
+## Growth Models wtih climate
+
+### Set up Recipes and workflows
+
+```{r}
+growth.spec <- linear_reg() %>%
+  set_engine("lmer")
+
+growth.rec <-  wl2_all_2023_clim %>% 
+  select(logHeight_next, height.cm, week, elapsed_weeks, parent.pop:mf, pop.mf, block, meanTemp:meanSWC) %>% 
+  recipe() %>% 
+  update_role(logHeight_next, new_role = "outcome") %>% 
+  update_role(c(height.cm, week, elapsed_weeks, parent.pop, mf, pop.mf, block, 
+                contains("mean"), maxTemp, minTemp), new_role = "predictor")
+
+growth.rec.poly <- growth.rec %>% 
+  step_poly(height.cm, degree = 3, keep_original_cols = TRUE)  %>%
+  step_rename_at(contains("poly"), fn = \(x) str_replace(x, "_poly_", ".p"))
+
+growth.wflow <- workflow() %>%
+  add_recipe(growth.rec)
+
+growth.wflow.poly <- workflow() %>% add_recipe(growth.rec.poly)
+```
+
+### Models
+```{r}
+#start with best random effects model 
+growth.models <- tibble(wflow=list(
+   m1_linear_weeks = {growth.wflow %>%
+      add_model(growth.spec,
+                formula = logHeight_next ~ height.cm + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block)) },
+   m2_min_temp = {growth.wflow %>%
+      add_model(growth.spec,
+                formula = logHeight_next ~ height.cm + minTemp + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block))},
+   m3_max_temp = {growth.wflow %>%
+      add_model(growth.spec,
+                formula = logHeight_next ~ height.cm + maxTemp + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block))},
+   m4_avg_temp = {growth.wflow %>%
+      add_model(growth.spec,
+                formula = logHeight_next ~ height.cm + meanTemp + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block))},
+   m5_diurnal_range = {growth.wflow %>%
+      add_model(growth.spec,
+                formula = logHeight_next ~ height.cm + meanDiurnal_Range + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block))},
+   m6_swc = {growth.wflow %>%
+      add_model(growth.spec,
+                formula = logHeight_next ~ height.cm + meanSWC + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block))}
+),
+name = names(wflow))
+```
+
+### Fit the models
+```{r}
+system.time( { # fast
+  growth.models <- growth.models %>%
+    mutate(fit = map(wflow, fit, data = drop_na(wl2_all_2023_clim, contains("Temp"), contains("Diurnal"),
+                                                       contains("SWC") )),
+           glance = map(fit, glance)
+    ) 
+})
+
+growth.models %>% select(-wflow, -fit) %>% unnest(glance) %>% arrange(BIC)
+```
+
+#I AM HERE 
+
+### Predictions 
+```{r}
+
+```
+
+## P matrix with weekly climate (need to update this code, mostly copied from Julin's code and my old code for now )
+
+### update the recipes to remove unused variable. Recipes are needed to get the polynomials into the newdata data frame
+```{r}
+growth.rec.poly <- growth.rec.poly %>% 
+  update_role(mf, block, elapsed_weeks, new_role = "unused") %>%
+  update_role_requirements(role="unused", bake = FALSE) 
+
+surv.rec.poly <- surv.rec.poly %>% 
+  update_role(mf, block, ppmf, new_role = "unused") %>%
+  update_role_requirements(role="unused", bake = FALSE) 
+```
+
+### Set up the prediction functions
+
+-     Add stdev for block and mf if included in final model 
+
+```{r}
+# 1. survival probability function
+##This is inverse logit.  Provides survival probability based on size.
+s.x=function(x, model, parent.pop, week = 5, elapsed_weeks = 1, re.form= ~(1 | parent.pop)) {
+  newdata=tibble(height.cm=x, parent.pop, week, elapsed_weeks) 
+  newdata <- prep(surv.rec.poly) %>% bake(newdata) # creates the polynomial variables
+  predict(model, newdata, re.form = re.form, type = "response")
+}
+
+# 2. growth function
+## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
+## Consider going back and modelling variance as a function of pop.  Might need to do this in BRMS.
+g.yx=function(xp, x, model, parent.pop, re.form = ~ (1 | parent.pop)) {
+  newdata <- tibble(height.cm=x, parent.pop)
+  newdata <- prep(growth.rec.poly) %>% bake(newdata) # creates the polynomial variables
+  pred.mean <- predict(model, newdata, re.form = re.form)
+  dnorm(xp,mean=(pred.mean), sd=sigma(model))
+}
+```
+
+### Define the structure of the IPM
+
+```{r}
+# the sizes we are integrating over
+minSize<-min(wl2_all_2023_timeprep$height.cm,na.rm=T) 
+maxSize<-max(wl2_all_2023_timeprep$height.cm,na.rm=T) 
+
+n=100 # dimensions of the matrix 
+
+b=minSize+c(0:n)*(maxSize-minSize)/n # boundary points
+y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
+h=y[2]-y[1] # step size
+```
+
+### Make the matrices (G, S, and P)
+```{r}
+makeG <- function(parent.pop, y, h, fn=g.yx, model=growth.model.final) {
+  h*outer(y, y, fn, model=model, parent.pop=parent.pop)
+}  # growth matrix
+# OK for each value of y,y evaluate the growth function g.yx using params
+# If I understand this correctly, the rows are x(t) and the columns are x(t+1)
+
+makeP <- function(parent.pop, G, y, fn=s.x, model=surv.model.final) {
+  S <- fn(y, model, parent.pop) 
+  P=G # placeholder; redefine P on the next line
+  for(i in 1:length(y)) P[,i]=G[,i]*S[i] # growth/survival matrix
+  P
+}
+```
+
+### Plot the matrix
+```{r}
+plotMatrix <- function(m, title=NA, y) {
+m %>% as_tibble() %>%
+  set_colnames(y) %>% 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) +
+  geom_contour(aes(z = value),lwd=.25) +
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(x = "Size (t)", y = "Size (t + 1)", title = title) +
+  coord_equal() +
+  theme_bw()
+}
+```
+
+#### Create a tibble to hold the matrices from each pop and fill it
+```{r}
+IPM.tibble <- tibble(parent.pop=unique(growth2$parent.pop)) %>%
+  mutate(G = map(parent.pop, makeG, y, h),
+         P = map2(parent.pop, G, makeP, y))
+
+IPM.tibble
+```
+
+#### Plot G matrices
+```{r}
+IPM.tibble %>%
+  mutate(Gplot = map2(G, parent.pop, \(G, parent.pop) {
+    plotMatrix(G, str_c("G matrix: ", parent.pop), y)}
+    )) %>%
+  pull(Gplot) %>% walk(print)
+```
+
+#### Plot P matrices
+```{r}
+IPM.tibble %>%
+  mutate(Pplot = map2(P, parent.pop, \(P, parent.pop) {
+    plotMatrix(P, str_c("P matrix: ", parent.pop), y)}
+    )) %>%
+  pull(Pplot) %>% walk(print)
+```
+
+#### Check for Eviction 
+```{r}
+
+```
+
