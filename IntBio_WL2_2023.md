@@ -1,7 +1,7 @@
 ---
 title: "IntBio_WL2_2023"
 author: "Brandie QC"
-date: "2025-03-26"
+date: "2025-04-09"
 output: 
   html_document: 
     keep_md: true
@@ -84,6 +84,22 @@ library(lmerTest)
 ##     step
 ```
 
+``` r
+conflicted::conflicts_prefer(lmerTest::lmer)
+```
+
+```
+## [conflicted] Will prefer lmerTest::lmer over any other package.
+```
+
+``` r
+conflicted::conflicts_prefer(dplyr::filter)
+```
+
+```
+## [conflicted] Will prefer dplyr::filter over any other package.
+```
+
 ## Load the data
 
 
@@ -164,7 +180,7 @@ wl2_all_2023_OLD <- left_join(wl2_size_2023, wl2_mort_2023) #42 more rows, why? 
 ```
 
 ``` r
-wl2_all_2023_OLD %>% group_by(Genotype, survey_date) %>% summarize(n=n()) %>% arrange(desc(n)) 
+wl2_all_2023_OLD %>% group_by(Genotype, survey_date) %>% summarise(n=n()) %>% arrange(desc(n)) 
 ```
 
 ```
@@ -504,7 +520,7 @@ summary(wl2_all_2023_timeprep)
 
 ``` r
 wl2_all_2023_timeprep %>%  #pretty skewed
-  ggplot(aes(x=height_next)) +
+  ggplot(aes(x=height.cm)) +
   geom_histogram()
 ```
 
@@ -516,11 +532,10 @@ wl2_all_2023_timeprep %>%  #pretty skewed
 
 ``` r
 wl2_all_2023_timeprep_scaled <- wl2_all_2023_timeprep %>% 
-  mutate(logHeight_next=log(height_next)) %>%  #transform the independent variable to be more normal
-  mutate_at(c("height.cm","week","elapsed_weeks"), scale) #scale the predictors height.cm + week + elapsed_weeks
+  mutate(logHeight=log(height.cm))  #transform height to be more normal - only for surv models 
 
 wl2_all_2023_timeprep_scaled %>% #better
-  ggplot(aes(x=logHeight_next)) +
+  ggplot(aes(x=logHeight)) +
   geom_histogram()
 ```
 
@@ -636,29 +651,27 @@ surv.models_random <- tribble(
   ~name,          ~f,
   "1a_intercept_pop_mf_block",     "surv ~ 1 + (1|parent.pop/mf) + (1|block)", 
   "1b_intercept_pop_mf_block2",    "surv ~ 1 + (1|parent.pop) + (1|pop.mf) + (1|block)",  #should be the same as above 
-  "2_linear_size_pops_mf_block",   "surv ~ height.cm + (1|block) + (1|parent.pop/mf)", 
-  "3_linear_weeks",                "surv ~ height.cm + (1|week) + (1|block) + (1|parent.pop/mf)",
-  "4_linear_elapsed_weeks",        "surv ~ height.cm + elapsed_weeks + (1|block) + (1|parent.pop/mf)",
-  "5_linear_weeks_all",            "surv ~ height.cm + elapsed_weeks + (1|week) + (1|block) + (1|parent.pop/mf)",
-  "6a_quadratic_size",             "surv ~ height.cm + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
-  "6b_quadratic_size_weeks",       "surv ~ height.cm + I(height.cm^2) + (1|week) + (1|block) + (1|parent.pop/mf)", 
-  "7a_cubic_size",                 "surv ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
-  "7a_cubic_size_weeks",           "surv ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|week) + (1|block) + (1|parent.pop/mf)",
-  "8a_linear_slope_pop",           "surv ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|block)",
-  #"8b_linear_slope_popmf",        "surv ~ height.cm + (1|block) + (height.cm|parent.pop/mf)",
-  #"8c_linear_slope_all",          "surv ~ height.cm + (height.cm|block) + (height.cm|parent.pop/mf)",
-  "8d_linear_slope_pop_week",      "surv ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|week) + (1|block)" #,
-  #"9_quad_slope",                 "surv ~ height.cm + I(height.cm^2) + (1|block) + (1|pop.mf) + (height.cm+I(height.cm^2)|parent.pop)"
+  "2_linear_size_pops_mf_block",   "surv ~ logHeight + (1|block) + (1|parent.pop/mf)", 
+  "3_linear_weeks",                "surv ~ logHeight + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "4_linear_elapsed_weeks",        "surv ~ logHeight + elapsed_weeks + (1|block) + (1|parent.pop/mf)",
+  "5_linear_weeks_all",            "surv ~ logHeight + elapsed_weeks + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "6a_quadratic_size",             "surv ~ logHeight + I(logHeight^2) + (1|block) + (1|parent.pop/mf)", 
+  "6b_quadratic_size_weeks",       "surv ~ logHeight + I(logHeight^2) + (1|week) + (1|block) + (1|parent.pop/mf)", 
+  "7a_cubic_size",                 "surv ~ logHeight + I(logHeight^2) + I(logHeight^3) + (1|block) + (1|parent.pop/mf)",
+  "7a_cubic_size_weeks",           "surv ~ logHeight + I(logHeight^2) + I(logHeight^3) + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "8a_linear_slope_pop",           "surv ~ logHeight + (logHeight|parent.pop) + (1|pop.mf) + (1|block)",
+  "8b_linear_slope_popmf",         "surv ~ logHeight + (1|block) + (logHeight|parent.pop/mf)",
+  #"8c_linear_slope_all",          "surv ~ logHeight + (logHeight|block) + (logHeight|parent.pop/mf)",
+  "8d_linear_slope_pop_week",      "surv ~ logHeight + (logHeight|parent.pop) + (1|pop.mf) + (1|week) + (1|block)" ,
+  #"9_quad_slope",                 "surv ~ logHeight + I(logHeight^2) + (1|block) + (1|pop.mf) + (logHeight+I(logHeight^2)|parent.pop)"
 )
 
 #run the models 
-#mod_test <- glmer(surv ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|week) + (1|block), family="binomial", data=wl2_all_2023_timeprep_scaled)
-#boundary (singular) fit: see help('isSingular') - linear slope pop & linear slope pop w/ week
-#Warning: Model failed to converge with max|grad| = 0.0897006 (tol = 0.002, component 1)Warning: Model is nearly unidentifiable: very large eigenvalue
- # - Rescale variables? - linear slope popmf
-#Warning: Model failed to converge with max|grad| = 0.092552 (tol = 0.002, component 1)Warning: Model is nearly unidentifiable: very large eigenvalue
- #- Rescale variables? - linear slope all 
-#Warning: Model failed to converge with max|grad| = 0.0116387 (tol = 0.002, component 1) - quad slope
+#mod_test <- glmer(surv ~ logHeight + (1|week) + (1|block) + (1|parent.pop/mf), family="binomial", data=wl2_all_2023_timeprep_scaled)
+#summary(mod_test)
+#boundary (singular) fit: see help('isSingular') - linear slope pop, linear slope popmf, & linear slope pop w/ week, maybe b/c little var explained by pop slopes 
+#Warning: Model failed to converge with max|grad| = 0.0118026 (tol = 0.002, component 1) - linear slope all 
+#Warning: Model failed to converge with max|grad| = 0.0163605 (tol = 0.002, component 1) - quad slope
 
 surv.models_random <- surv.models_random %>%
   mutate(glmer = map(f, ~ glmer(as.formula(.), 
@@ -671,6 +684,7 @@ surv.models_random <- surv.models_random %>%
 ```
 
 ```
+## boundary (singular) fit: see help('isSingular')
 ## boundary (singular) fit: see help('isSingular')
 ## boundary (singular) fit: see help('isSingular')
 ```
@@ -698,21 +712,22 @@ surv.models_random %>% select(-f, -glmer, -predict) %>% unnest(BIC) %>% arrange(
 ```
 
 ```
-## # A tibble: 12 × 4
+## # A tibble: 13 × 4
 ##    name                        glance           AIC         BIC
 ##    <chr>                       <list>           <list>    <dbl>
-##  1 3_linear_weeks              <tibble [6 × 7]> <dbl [1]>  911.
-##  2 5_linear_weeks_all          <tibble [7 × 7]> <dbl [1]>  912.
-##  3 6b_quadratic_size_weeks     <tibble [7 × 7]> <dbl [1]>  920.
-##  4 8d_linear_slope_pop_week    <tibble [8 × 7]> <dbl [1]>  928.
-##  5 7a_cubic_size_weeks         <tibble [8 × 7]> <dbl [1]>  928.
-##  6 2_linear_size_pops_mf_block <tibble [5 × 7]> <dbl [1]> 1013.
-##  7 4_linear_elapsed_weeks      <tibble [6 × 7]> <dbl [1]> 1021.
-##  8 6a_quadratic_size           <tibble [6 × 7]> <dbl [1]> 1022.
+##  1 3_linear_weeks              <tibble [6 × 7]> <dbl [1]>  915.
+##  2 5_linear_weeks_all          <tibble [7 × 7]> <dbl [1]>  916.
+##  3 6b_quadratic_size_weeks     <tibble [7 × 7]> <dbl [1]>  921.
+##  4 7a_cubic_size_weeks         <tibble [8 × 7]> <dbl [1]>  929.
+##  5 8d_linear_slope_pop_week    <tibble [8 × 7]> <dbl [1]>  932.
+##  6 2_linear_size_pops_mf_block <tibble [5 × 7]> <dbl [1]> 1019.
+##  7 6a_quadratic_size           <tibble [6 × 7]> <dbl [1]> 1024.
+##  8 4_linear_elapsed_weeks      <tibble [6 × 7]> <dbl [1]> 1027.
 ##  9 7a_cubic_size               <tibble [7 × 7]> <dbl [1]> 1031.
-## 10 8a_linear_slope_pop         <tibble [7 × 7]> <dbl [1]> 1032.
+## 10 8a_linear_slope_pop         <tibble [7 × 7]> <dbl [1]> 1037.
 ## 11 1a_intercept_pop_mf_block   <tibble [4 × 7]> <dbl [1]> 1039.
 ## 12 1b_intercept_pop_mf_block2  <tibble [4 × 7]> <dbl [1]> 1039.
+## 13 8b_linear_slope_popmf       <tibble [9 × 7]> <dbl [1]> 1054.
 ```
 
 ``` r
@@ -720,26 +735,27 @@ surv.models_random %>% select(-f, -glmer, -predict) %>% unnest(AIC) %>% arrange(
 ```
 
 ```
-## # A tibble: 12 × 4
+## # A tibble: 13 × 4
 ##    name                        glance             AIC BIC      
 ##    <chr>                       <list>           <dbl> <list>   
-##  1 5_linear_weeks_all          <tibble [7 × 7]>  864. <dbl [1]>
-##  2 3_linear_weeks              <tibble [6 × 7]>  870. <dbl [1]>
-##  3 6b_quadratic_size_weeks     <tibble [7 × 7]>  872. <dbl [1]>
-##  4 8d_linear_slope_pop_week    <tibble [8 × 7]>  873. <dbl [1]>
-##  5 7a_cubic_size_weeks         <tibble [8 × 7]>  873. <dbl [1]>
-##  6 2_linear_size_pops_mf_block <tibble [5 × 7]>  979. <dbl [1]>
-##  7 4_linear_elapsed_weeks      <tibble [6 × 7]>  980. <dbl [1]>
-##  8 6a_quadratic_size           <tibble [6 × 7]>  981. <dbl [1]>
-##  9 7a_cubic_size               <tibble [7 × 7]>  983. <dbl [1]>
-## 10 8a_linear_slope_pop         <tibble [7 × 7]>  984. <dbl [1]>
-## 11 1a_intercept_pop_mf_block   <tibble [4 × 7]> 1012. <dbl [1]>
-## 12 1b_intercept_pop_mf_block2  <tibble [4 × 7]> 1012. <dbl [1]>
+##  1 5_linear_weeks_all          <tibble [7 × 7]>  868. <dbl [1]>
+##  2 6b_quadratic_size_weeks     <tibble [7 × 7]>  873. <dbl [1]>
+##  3 3_linear_weeks              <tibble [6 × 7]>  874. <dbl [1]>
+##  4 7a_cubic_size_weeks         <tibble [8 × 7]>  874. <dbl [1]>
+##  5 8d_linear_slope_pop_week    <tibble [8 × 7]>  877. <dbl [1]>
+##  6 6a_quadratic_size           <tibble [6 × 7]>  982. <dbl [1]>
+##  7 7a_cubic_size               <tibble [7 × 7]>  983. <dbl [1]>
+##  8 2_linear_size_pops_mf_block <tibble [5 × 7]>  985. <dbl [1]>
+##  9 4_linear_elapsed_weeks      <tibble [6 × 7]>  986. <dbl [1]>
+## 10 8a_linear_slope_pop         <tibble [7 × 7]>  989. <dbl [1]>
+## 11 8b_linear_slope_popmf       <tibble [9 × 7]>  993. <dbl [1]>
+## 12 1a_intercept_pop_mf_block   <tibble [4 × 7]> 1012. <dbl [1]>
+## 13 1b_intercept_pop_mf_block2  <tibble [4 × 7]> 1012. <dbl [1]>
 ```
 
 ``` r
 #3_linear_weeks wins with BIC
-#5_linear_weeks_all wins with AIC - but 3_linear_weeks close behind so go with simpler model 
+#5_linear_weeks_all wins with AIC - but 3_linear_weeks not too far behind so go with simpler model?
 ```
 
 
@@ -752,54 +768,54 @@ summary(survival.model.final_random)
 ## Generalized linear mixed model fit by maximum likelihood (Laplace
 ##   Approximation) [glmerMod]
 ##  Family: binomial  ( logit )
-## Formula: surv ~ height.cm + (1 | week) + (1 | block) + (1 | parent.pop/mf)
+## Formula: surv ~ logHeight + (1 | week) + (1 | block) + (1 | parent.pop/mf)
 ##    Data: wl2_all_2023_timeprep_scaled
 ## 
 ##      AIC      BIC   logLik deviance df.resid 
-##    869.7    910.8   -428.8    857.7     6975 
+##    873.6    914.7   -430.8    861.6     6975 
 ## 
 ## Scaled residuals: 
 ##     Min      1Q  Median      3Q     Max 
-## -42.627   0.022   0.051   0.104   0.708 
+## -44.200   0.024   0.052   0.106   0.743 
 ## 
 ## Random effects:
 ##  Groups        Name        Variance Std.Dev.
-##  mf:parent.pop (Intercept) 0.1856   0.4308  
-##  parent.pop    (Intercept) 0.1366   0.3696  
-##  block         (Intercept) 1.3650   1.1683  
-##  week          (Intercept) 2.6108   1.6158  
+##  mf:parent.pop (Intercept) 0.1967   0.4435  
+##  parent.pop    (Intercept) 0.1181   0.3437  
+##  block         (Intercept) 1.3739   1.1721  
+##  week          (Intercept) 2.5151   1.5859  
 ## Number of obs: 6981, groups:  
 ## mf:parent.pop, 142; parent.pop, 22; block, 13; week, 12
 ## 
 ## Fixed effects:
 ##             Estimate Std. Error z value Pr(>|z|)    
-## (Intercept)   6.0746     0.6449   9.420  < 2e-16 ***
-## height.cm     1.2070     0.2806   4.301  1.7e-05 ***
+## (Intercept)   5.0819     0.6369   7.979 1.48e-15 ***
+## logHeight     0.7102     0.1532   4.635 3.57e-06 ***
 ## ---
 ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 ## 
 ## Correlation of Fixed Effects:
 ##           (Intr)
-## height.cm 0.186
+## logHeight -0.171
 ```
 
 #### Predicted vs. Observed Survival
 
-Note that this is on the scaled data
+Note that this is with the transformed height
 
 
 ``` r
 wl2_all_2023_timeprep_scaled %>% 
-  mutate(pred_fixef = predict(survival.model.final_random, newdata = ., re.form = NA), 
-        pred_ranef = predict(survival.model.final_random, newdata = ., re.form = ~(1|parent.pop))) %>% 
-  ggplot(aes(x = height.cm, y = surv)) +
+  mutate(pred_fixef = predict(survival.model.final_random, newdata = ., type="response", re.form = NA), 
+        pred_ranef = predict(survival.model.final_random, newdata = ., type="response", re.form = ~(1|parent.pop))) %>% 
+  ggplot(aes(x = logHeight, y = surv)) +
   geom_point(alpha=.2) +
   geom_line(aes(y = pred_fixef), 
             color = "blue", 
-            size = 1.2, alpha=0.5) +
+            size = 1.2, alpha=0.3) +
   geom_line(aes(y = pred_ranef), 
             color = "green", 
-            size = 1.2, alpha=0.3) +
+            size = 1.2, alpha=0.5) +
   facet_wrap(~parent.pop, scales="free")
 ```
 
@@ -920,27 +936,29 @@ Notes:
 ``` r
 growth_models_random <- tribble(
   ~name,          ~f,
-  "1a_intercept_pop_mf_block",      "logHeight_next ~ 1 + (1|block) +  (1|parent.pop/mf)",
-  "1b_intercept_pop_mf_block2",     "logHeight_next ~ 1 + (1|block) +  (1|parent.pop) + (1|pop.mf)", #should be the same as above 
-  "2_linear_size_pops_mf_block",    "logHeight_next ~ height.cm + (1|parent.pop/mf) + (1|block)",
-  "3_linear_weeks",                 "logHeight_next ~ height.cm + (1|week) + (1|block) + (1|parent.pop/mf)",
-  "4a_linear_elapsed_weeks",        "logHeight_next ~ height.cm + elapsed_weeks + (1|block) + (1|parent.pop/mf)",
-  "4b_linear_elapsed_weeks_2way",   "logHeight_next ~ height.cm*elapsed_weeks + (1|block) + (1|parent.pop/mf)",
-  "5_linear_weeks_all",             "logHeight_next ~ height.cm + elapsed_weeks + (1|week) + (1|block) + (1|parent.pop/mf)",
-  "6a_quadratic_size",              "logHeight_next ~ height.cm + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
-  "6b_quadratic_size_weeks",        "logHeight_next ~ height.cm + I(height.cm^2) + (1|week)+ (1|block) + (1|parent.pop/mf)", 
-  "7a_cubic_size",                  "logHeight_next ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
-  "7b_cubic_size_weeks",            "logHeight_next ~ height.cm + I(height.cm^2) + I(height.cm^3) +  (1|week)+ (1|block) + (1|parent.pop/mf)",
-  "8a_linear_slope_pop",            "logHeight_next ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|block)",
-  #"8b_linear_slope_popmf",         "logHeight_next ~ height.cm + (1|block) + (height.cm|parent.pop/mf)",
-  "8c_linear_slope_all",            "logHeight_next ~ height.cm + (height.cm|block) + (height.cm|parent.pop/mf)",
-  "8d_linear_slope_pop_week",       "logHeight_next ~ height.cm + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block)",
-  "9_quad_slope",                 "logHeight_next ~ height.cm + I(height.cm^2) + (1|block) + (1|pop.mf) + (height.cm+I(height.cm^2)|parent.pop)"
+  "1a_intercept_pop_mf_block",      "height_next ~ 1 + (1|block) +  (1|parent.pop/mf)",
+  "1b_intercept_pop_mf_block2",     "height_next ~ 1 + (1|block) +  (1|parent.pop) + (1|pop.mf)", #should be the same as above 
+  "2_linear_size_pops_mf_block",    "height_next ~ height.cm + (1|parent.pop/mf) + (1|block)",
+  "3_linear_weeks",                 "height_next ~ height.cm + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "4a_linear_elapsed_weeks",        "height_next ~ height.cm + elapsed_weeks + (1|block) + (1|parent.pop/mf)",
+  "4b_linear_elapsed_weeks_2way",   "height_next ~ height.cm*elapsed_weeks + (1|block) + (1|parent.pop/mf)",
+  "5_linear_weeks_all",             "height_next ~ height.cm + elapsed_weeks + (1|week) + (1|block) + (1|parent.pop/mf)",
+  "6a_quadratic_size",              "height_next ~ height.cm + I(height.cm^2) + (1|block) + (1|parent.pop/mf)", 
+  "6b_quadratic_size_weeks",        "height_next ~ height.cm + I(height.cm^2) + (1|week)+ (1|block) + (1|parent.pop/mf)", 
+  #"7a_cubic_size",                  "height_next ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|block) + (1|parent.pop/mf)",
+  #"7b_cubic_size_weeks",            "height_next ~ height.cm + I(height.cm^2) + I(height.cm^3) +  (1|week)+ (1|block) + (1|parent.pop/mf)",
+  "8a_linear_slope_pop",            "height_next ~ height.cm + (height.cm|parent.pop) + (1|pop.mf) + (1|block)",
+  #"8b_linear_slope_popmf",         "height_next ~ height.cm + (1|block) + (height.cm|parent.pop/mf)",
+  #"8c_linear_slope_all",            "height_next ~ height.cm + (height.cm|block) + (height.cm|parent.pop/mf)",
+  "8d_linear_slope_pop_week",       "height_next ~ height.cm + (height.cm|parent.pop) + (1|week) + (1|pop.mf) + (1|block)",
+  #"9_quad_slope",                 "height_next ~ height.cm + I(height.cm^2) + (1|block) + (1|pop.mf) + (height.cm+I(height.cm^2)|parent.pop)"
 )
 
 #run the models 
-#mod_test <- lmer(logHeight_next ~ height.cm + I(height.cm^2) + (1|block) + (1|pop.mf) + (height.cm+I(height.cm^2)|parent.pop), data=wl2_all_2023_timeprep_scaled)
-#Warning: Model failed to converge with max|grad| = 0.00201127 (tol = 0.002, component 1) - 8b_linear_slope_popmf
+#mod_test <- lmer(height_next ~ height.cm + I(height.cm^2) + (1|block) + (1|pop.mf) + (height.cm+I(height.cm^2)|parent.pop), data=wl2_all_2023_timeprep_scaled)
+#Warning: Some predictor variables are on very different scales: consider rescalingWarning: Some predictor variables are on very different scales: consider rescaling - 7a_cubic_size, 7b_cubic_size_weeks
+#Warning: Model failed to converge with max|grad| = 0.00201127 (tol = 0.002, component 1) - 8b_linear_slope_popmf, 8c_linear_slope_all
+#boundary (singular) fit: see help('isSingular'); Warning: Model failed to converge with 2 negative eigenvalues: -5.6e+01 -8.0e+01 - 9_quad_slope
 
 growth_models_random <- growth_models_random %>%
   mutate(lmer = map(f, ~ lmer(as.formula(.), data = wl2_all_2023_timeprep_scaled)), #run the models 
@@ -952,70 +970,62 @@ growth_models_random %>% select(-f, -lmer, -predict) %>% filter(name=="1a_interc
 
 ```
 ## # A tibble: 2 × 8
-##   name                        nobs sigma logLik   AIC   BIC REMLcrit df.residual
-##   <chr>                      <int> <dbl>  <dbl> <dbl> <dbl>    <dbl>       <int>
-## 1 1a_intercept_pop_mf_block   6981 0.467 -4814. 9639. 9673.    9629.        6976
-## 2 1b_intercept_pop_mf_block2  6981 0.467 -4814. 9639. 9673.    9629.        6976
+##   name                     nobs sigma  logLik    AIC    BIC REMLcrit df.residual
+##   <chr>                   <int> <dbl>   <dbl>  <dbl>  <dbl>    <dbl>       <int>
+## 1 1a_intercept_pop_mf_bl…  6981  2.59 -16772. 33554. 33588.   33544.        6976
+## 2 1b_intercept_pop_mf_bl…  6981  2.59 -16772. 33554. 33588.   33544.        6976
 ```
 
 ``` r
-growth_models_random %>% select(-f, -lmer) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
+growth_models_random %>% select(-f, -lmer) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 6b_quadratic_size_weeks wins 
 ```
 
 ```
-## # A tibble: 15 × 9
-##    name              predict  nobs sigma logLik   AIC   BIC REMLcrit df.residual
-##    <chr>             <list>  <int> <dbl>  <dbl> <dbl> <dbl>    <dbl>       <int>
-##  1 8d_linear_slope_… <dbl>    6981 0.364 -3014. 6046. 6107.    6028.        6972
-##  2 7b_cubic_size_we… <dbl>    6981 0.368 -3076. 6169. 6231.    6151.        6972
-##  3 8c_linear_slope_… <dbl>    6981 0.378 -3288. 6600. 6682.    6576.        6969
-##  4 6b_quadratic_siz… <dbl>    6981 0.379 -3315. 6647. 6702.    6631.        6973
-##  5 9_quad_slope      <dbl>    6981 0.378 -3305. 6633. 6716.    6609.        6969
-##  6 8a_linear_slope_… <dbl>    6981 0.382 -3338. 6691. 6746.    6675.        6973
-##  7 7a_cubic_size     <dbl>    6981 0.389 -3489. 6994. 7049.    6978.        6973
-##  8 6a_quadratic_size <dbl>    6981 0.394 -3578. 7170. 7218.    7156.        6974
-##  9 5_linear_weeks_a… <dbl>    6981 0.404 -3797. 7610. 7665.    7594.        6973
-## 10 3_linear_weeks    <dbl>    6981 0.405 -3804. 7622. 7670.    7608.        6974
-## 11 2_linear_size_po… <dbl>    6981 0.410 -3867. 7746. 7787.    7734.        6975
-## 12 4a_linear_elapse… <dbl>    6981 0.410 -3869. 7751. 7799.    7737.        6974
-## 13 4b_linear_elapse… <dbl>    6981 0.410 -3873. 7762. 7817.    7746.        6973
-## 14 1a_intercept_pop… <dbl>    6981 0.467 -4814. 9639. 9673.    9629.        6976
-## 15 1b_intercept_pop… <dbl>    6981 0.467 -4814. 9639. 9673.    9629.        6976
+## # A tibble: 11 × 9
+##    name           predict  nobs sigma  logLik    AIC    BIC REMLcrit df.residual
+##    <chr>          <list>  <int> <dbl>   <dbl>  <dbl>  <dbl>    <dbl>       <int>
+##  1 6b_quadratic_… <dbl>    6981  1.37 -12212. 24439. 24494.   24423.        6973
+##  2 8d_linear_slo… <dbl>    6981  1.36 -12208. 24435. 24496.   24417.        6972
+##  3 3_linear_weeks <dbl>    6981  1.37 -12219. 24453. 24501.   24439.        6974
+##  4 5_linear_week… <dbl>    6981  1.37 -12218. 24452. 24507.   24436.        6973
+##  5 4b_linear_ela… <dbl>    6981  1.43 -12514. 25045. 25100.   25029.        6973
+##  6 4a_linear_ela… <dbl>    6981  1.43 -12520. 25054. 25102.   25040.        6974
+##  7 6a_quadratic_… <dbl>    6981  1.44 -12579. 25171. 25219.   25157.        6974
+##  8 8a_linear_slo… <dbl>    6981  1.45 -12623. 25262. 25317.   25246.        6973
+##  9 2_linear_size… <dbl>    6981  1.47 -12725. 25462. 25503.   25450.        6975
+## 10 1b_intercept_… <dbl>    6981  2.59 -16772. 33554. 33588.   33544.        6976
+## 11 1a_intercept_… <dbl>    6981  2.59 -16772. 33554. 33588.   33544.        6976
 ```
 
 ``` r
-growth_models_random %>% select(-f, -lmer) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 
+growth_models_random %>% select(-f, -lmer) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 8d_linear_slope_pop_week
 ```
 
 ```
-## # A tibble: 15 × 9
-##    name              predict  nobs sigma logLik   AIC   BIC REMLcrit df.residual
-##    <chr>             <list>  <int> <dbl>  <dbl> <dbl> <dbl>    <dbl>       <int>
-##  1 8d_linear_slope_… <dbl>    6981 0.364 -3014. 6046. 6107.    6028.        6972
-##  2 7b_cubic_size_we… <dbl>    6981 0.368 -3076. 6169. 6231.    6151.        6972
-##  3 8c_linear_slope_… <dbl>    6981 0.378 -3288. 6600. 6682.    6576.        6969
-##  4 9_quad_slope      <dbl>    6981 0.378 -3305. 6633. 6716.    6609.        6969
-##  5 6b_quadratic_siz… <dbl>    6981 0.379 -3315. 6647. 6702.    6631.        6973
-##  6 8a_linear_slope_… <dbl>    6981 0.382 -3338. 6691. 6746.    6675.        6973
-##  7 7a_cubic_size     <dbl>    6981 0.389 -3489. 6994. 7049.    6978.        6973
-##  8 6a_quadratic_size <dbl>    6981 0.394 -3578. 7170. 7218.    7156.        6974
-##  9 5_linear_weeks_a… <dbl>    6981 0.404 -3797. 7610. 7665.    7594.        6973
-## 10 3_linear_weeks    <dbl>    6981 0.405 -3804. 7622. 7670.    7608.        6974
-## 11 2_linear_size_po… <dbl>    6981 0.410 -3867. 7746. 7787.    7734.        6975
-## 12 4a_linear_elapse… <dbl>    6981 0.410 -3869. 7751. 7799.    7737.        6974
-## 13 4b_linear_elapse… <dbl>    6981 0.410 -3873. 7762. 7817.    7746.        6973
-## 14 1a_intercept_pop… <dbl>    6981 0.467 -4814. 9639. 9673.    9629.        6976
-## 15 1b_intercept_pop… <dbl>    6981 0.467 -4814. 9639. 9673.    9629.        6976
+## # A tibble: 11 × 9
+##    name           predict  nobs sigma  logLik    AIC    BIC REMLcrit df.residual
+##    <chr>          <list>  <int> <dbl>   <dbl>  <dbl>  <dbl>    <dbl>       <int>
+##  1 8d_linear_slo… <dbl>    6981  1.36 -12208. 24435. 24496.   24417.        6972
+##  2 6b_quadratic_… <dbl>    6981  1.37 -12212. 24439. 24494.   24423.        6973
+##  3 5_linear_week… <dbl>    6981  1.37 -12218. 24452. 24507.   24436.        6973
+##  4 3_linear_weeks <dbl>    6981  1.37 -12219. 24453. 24501.   24439.        6974
+##  5 4b_linear_ela… <dbl>    6981  1.43 -12514. 25045. 25100.   25029.        6973
+##  6 4a_linear_ela… <dbl>    6981  1.43 -12520. 25054. 25102.   25040.        6974
+##  7 6a_quadratic_… <dbl>    6981  1.44 -12579. 25171. 25219.   25157.        6974
+##  8 8a_linear_slo… <dbl>    6981  1.45 -12623. 25262. 25317.   25246.        6973
+##  9 2_linear_size… <dbl>    6981  1.47 -12725. 25462. 25503.   25450.        6975
+## 10 1b_intercept_… <dbl>    6981  2.59 -16772. 33554. 33588.   33544.        6976
+## 11 1a_intercept_… <dbl>    6981  2.59 -16772. 33554. 33588.   33544.        6976
 ```
 
 ``` r
-#8d_linear_slope_pop_week wins by BIC and AIC
+#go with 8d_linear_slope_pop_week since not that different in BIC from quadratic size? 
 ```
 
 
 ``` r
 growth.model.final_random <- growth_models_random %>% filter(name == "8d_linear_slope_pop_week") %>% pull(lmer) %>% magrittr::extract2(1)
-summary(growth.model.final_random) #positive slope, greater than 1 for height, not negative like Jenny
+summary(growth.model.final_random) #positive slope, less than 1 for height, not negative like Jenny
 ```
 
 ```
@@ -1024,32 +1034,32 @@ summary(growth.model.final_random) #positive slope, greater than 1 for height, n
 ## Formula: as.formula(.)
 ##    Data: wl2_all_2023_timeprep_scaled
 ## 
-## REML criterion at convergence: 6027.5
+## REML criterion at convergence: 24416.6
 ## 
 ## Scaled residuals: 
-##     Min      1Q  Median      3Q     Max 
-## -9.7533 -0.3691  0.1286  0.5305  4.1864 
+##      Min       1Q   Median       3Q      Max 
+## -19.5493  -0.4380  -0.0080   0.4124  11.1176 
 ## 
 ## Random effects:
 ##  Groups     Name        Variance Std.Dev. Corr 
-##  pop.mf     (Intercept) 0.002707 0.05203       
-##  parent.pop (Intercept) 0.027852 0.16689       
-##             height.cm   0.132399 0.36387  -0.80
-##  block      (Intercept) 0.001850 0.04302       
-##  week       (Intercept) 0.024361 0.15608       
-##  Residual               0.132813 0.36443       
+##  pop.mf     (Intercept) 0.027901 0.16704       
+##  parent.pop (Intercept) 0.797662 0.89312       
+##             height.cm   0.003055 0.05528  -0.12
+##  block      (Intercept) 0.024685 0.15711       
+##  week       (Intercept) 0.377171 0.61414       
+##  Residual               1.861997 1.36455       
 ## Number of obs: 6981, groups:  pop.mf, 142; parent.pop, 22; block, 13; week, 12
 ## 
 ## Fixed effects:
 ##             Estimate Std. Error       df t value Pr(>|t|)    
-## (Intercept)  1.50679    0.05978 26.28590   25.20  < 2e-16 ***
-## height.cm    1.08404    0.07951 21.50384   13.63 4.68e-12 ***
+## (Intercept)  0.96144    0.26848 31.96961   3.581  0.00112 ** 
+## height.cm    0.84697    0.01769 18.29144  47.883  < 2e-16 ***
 ## ---
 ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 ## 
 ## Correlation of Fixed Effects:
 ##           (Intr)
-## height.cm -0.440
+## height.cm -0.163
 ```
 
 #### Predicted vs. Observed Growth
@@ -1057,17 +1067,28 @@ summary(growth.model.final_random) #positive slope, greater than 1 for height, n
 
 ``` r
 wl2_all_2023_timeprep_scaled %>% 
-  cbind(predicted={growth_models_random %>% filter(name=="8d_linear_slope_pop_week") %>% pull(predict) %>% unlist()}) %>%
-  ggplot(aes(x=logHeight_next, y = predicted)) +
+  cbind(predicted_slope={growth_models_random %>% filter(name=="8d_linear_slope_pop_week") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=height_next, y = predicted_slope)) +
   geom_point(alpha=.2) +
   geom_abline(color="skyblue2") +
-  facet_wrap(~parent.pop, scales="free")
+  facet_wrap(~parent.pop, scales="free") #decent for most pops
 ```
 
 ![](IntBio_WL2_2023_files/figure-html/unnamed-chunk-20-1.png)<!-- -->
 
 ``` r
-#decent for most pops 
+wl2_all_2023_timeprep_scaled %>% 
+  cbind(predicted_quad={growth_models_random %>% filter(name=="6b_quadratic_size_weeks") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=height_next, y = predicted_quad)) +
+  geom_point(alpha=.2) +
+  geom_abline(color="skyblue2") +
+  facet_wrap(~parent.pop, scales="free")
+```
+
+![](IntBio_WL2_2023_files/figure-html/unnamed-chunk-20-2.png)<!-- -->
+
+``` r
+#models not too different from each other 
 ```
 
 ## P Matrix
@@ -1096,7 +1117,7 @@ surv.coefs <- surv.models_random %>%
   unnest(coefs) 
 
 params$surv.int <- surv.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
-params$surv.slope1 <- surv.coefs %>% filter(term == "height.cm") %>% pull(estimate)
+params$surv.slope1 <- surv.coefs %>% filter(term == "logHeight") %>% pull(estimate)
 ```
 
 
@@ -1128,7 +1149,7 @@ s.x=function(x,params) {
 # 2. growth function
 ## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
 g.yx=function(xp,x,params) {
-  dnorm(xp,mean=exp(params$growth.int)+exp(params$growth.slope*x),sd=exp(params$growth.sd))
+  dnorm(xp,mean=params$growth.int+params$growth.slope*x,sd=params$growth.sd)
 }
 ```
 
@@ -1188,10 +1209,11 @@ P %>% as_tibble() %>%
 
 ![](IntBio_WL2_2023_files/figure-html/unnamed-chunk-27-1.png)<!-- -->
 
-Check for eviction Comparison of predicted survival probability to
-observed values to test for unintentional eviction. The black line shows
-the fitted survival model. The red dot shows the column sums of the
-growth/survival matrix
+#### Check for eviction 
+
+Comparison of predicted survival probability to observed values to test for unintentional eviction. 
+The black line shows the fitted survival model. 
+The red dot shows the column sums of the growth/survival matrix
 
 
 ``` r
@@ -1202,3 +1224,41 @@ plot(y,s.x(y,params), #fitted survival model
 ```
 
 ![](IntBio_WL2_2023_files/figure-html/unnamed-chunk-28-1.png)<!-- -->
+Looks like there is some eviction of small sizes 
+
+
+``` r
+#one way to correct for eviction is to assign all really small indivs to same size class and all really big indivs to same size class
+G=h*outer(y,y,g.yx,params=params) # growth matrix
+ S=s.x(y,params=params)
+ P=G
+   # fix eviction of offspring
+ for(i in 1:(n/2)) { #All indivs smaller than the lower integration limit are assigned to the smallest size class.
+    G[1,i]<-G[1,i]+1-sum(G[,i]) 
+    P[,i]<-G[,i]*S[i]
+  }
+
+ plot(y,s.x(y,params),xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(P,2,sum),col="red",lwd=3,cex=.1,pch=19) # solution worked
+```
+
+![](IntBio_WL2_2023_files/figure-html/unnamed-chunk-29-1.png)<!-- -->
+
+``` r
+P %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Size and Growth") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+
+![](IntBio_WL2_2023_files/figure-html/unnamed-chunk-29-2.png)<!-- -->
+
