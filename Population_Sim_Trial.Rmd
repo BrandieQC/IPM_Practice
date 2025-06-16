@@ -1,0 +1,158 @@
+---
+title: "Population_Sim_Trial"
+author: "Brandie QC"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Population Simulation Attempt
+
+Suggested parameters from Julin:
+
+-   1000 F2s (or just 1000 individuals)
+
+    -   Done with runMacs
+
+-   100 loci per trait with some kind of (expotnetial?) decay in effect
+    size
+
+    -   Use nQtlPerChr??
+
+-   Traits:
+
+    -   Germination
+
+    -   Initial size
+
+    -   Establishment
+
+    -   Growth rate
+
+    -   Flowering probability
+
+        -   Ideally would depend on size... - do this through
+            correlation matrix?
+
+    -   Fruit per plant
+
+        -   Ideally would depend on size...
+
+    -   others?
+
+Rishav demoed AlphaRSim:
+<https://cran.r-project.org/web/packages/AlphaSimR/index.html>
+
+-   If we find it can't do what we want we can move on.
+
+-   Rishav's demo is on his GitHub:
+    <https://github.com/rishavray/IPM_practice/blob/main/IPM_genetic_simulation.Rmd>
+
+## Libraries
+
+```{r}
+library(AlphaSimR)
+library(tidyverse)
+```
+
+## Create Founder Population
+
+```{r}
+founderPop = runMacs(
+  nInd = 1000, #number of individuals to simulate 
+  nChr = 14, #number of chromosomes to simulate - may not matter that match
+  segSites = 1000, #number of segregating sites to keep per chromosome. - this shoudl be a million b/c its per site 
+  species = "GENERIC" #The GENERIC history is meant to be a reasonable all-purpose choice. It runs quickly and models a population with an effective populations size that has gone through several historic bottlenecks.
+)
+```
+
+## Define Genetic Architecture for Traits
+
+```{r}
+SP = SimParam$new(founderPop)
+#Starts the process of building a new simulation by creating a new SimParam object and assigning a founder population to the class.
+
+SP$addTraitAG(nQtlPerChr = 43, 
+              mean = c(3, 5, 5, 3, 4, 3), 
+              var = c(2, 2, 2, 2, 2, 2), 
+              varGxE = c(0.2, 0.2, 0.2, 0.2, 0.2, 0.2), 
+              name=c("GermProp", "Initial_Size", "Establishment", "Growth Rate", "FL_Prob", "Fruits"))
+#Randomly assigns eligible QTLs for one or more additive GxE traits. If simulating more than one trait, all traits will be pleiotropic with correlated effects.
+##nQtlPerChr = number of QTLs per chromosome. Can be a single value or nChr values.
+###100 loci/14 chromosomes = 7.14*6traits = 43
+##mean = a vector of desired mean genetic values for one or more traits
+##var = a vector of desired genetic variances for one or more traits
+##varGxE = a vector of total genotype-by-environment variances for the traits
+##name = optional name for trait(s)
+
+
+VarE = c(0.4, 0.4, 0.4, 0.4, 0.4, 0.4) # environmental variation 
+SP$setVarE(h2 = c(0.5, 0.5, 0.5, 0.5, 0.5, 0.5)) # Heritability of 0.5
+```
+
+## Create Initial Population
+
+```{r}
+pop = newPop(founderPop, simParam = SP)
+```
+
+## Simulate Multiple Generations with Changing Environment
+
+We would be using the setPheno function to set the phenotypic values
+with the residual environmental variance.
+
+```{r}
+results = list()
+climateTrend = seq(1, 1.5, length.out = 10) # Warming climate scenario
+
+for (gen in 1:10) {
+  # Current climate variable
+  currentClimate = climateTrend[gen]
+  
+  # Calculate fitness based on genetic value and environment
+  pop = setPheno(pop, varE = VarE*currentClimate, reps = 1, simParam = SP)
+  fitness = pop@pheno[,1]
+  
+  # Selection - individuals with higher fitness have higher probability of reproducing
+  selectedIndices = sample(1:pop@nInd, 50, prob = fitness/sum(fitness))
+  selectedPop = pop[selectedIndices]
+  
+  # Random mating
+  pop = randCross(selectedPop, nCrosses = 100, nProgeny = 1, simParam = SP)
+  
+  # Store results
+  results[[gen]] = data.frame(
+    generation = gen,
+    meanGV = mean(pop@gv),
+    varGV = var(pop@gv[,1]),
+    climate = currentClimate,
+    fitness = mean(fitness)
+  )
+}
+```
+
+I'm clearly doing something wrong.
+
+## Visualize Results
+
+```{r}
+# Convert results to data frame
+resultsDF = do.call(rbind, results)
+
+ggplot(resultsDF, aes(x = generation)) +
+  geom_line(aes(y = meanGV, color = "Mean Genetic Value")) +
+  geom_line(aes(y = climate, color = "Climate")) +
+  geom_line(aes(y = varGV, colour = "Trait Variance"))+
+  geom_line(aes(y =fitness, colour = "Fitness"))+
+  labs(title = "Adaptation to Changing Climate",
+       x = "Generation",
+       y = "Value") +
+  #scale_color_manual(values = c("Mean Genetic Value" = "blue", "Climate" = "red")) +
+  theme_doc()
+```
