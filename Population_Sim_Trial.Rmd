@@ -79,10 +79,12 @@ SP <- SimParam$new(founderPop)
 #Starts the process of building a new simulation by creating a new SimParam object and assigning a founder population to the class.
 
 traitMeans <- c(germination.logit = logit(0.33), #logit to scale it (from gene --> trait)
-                init.size = 7, #recruit size?
                 establishment.logit = logit(0.67),
                 y1surv.logit = logit(0.45),
-                rel.growth = 1, #rate of accumulation of new dry mass per unit of existing dry mass
+                alpha = 40, #Hmax = alpha -Sets the asymptote (max growth) for the Weibull model 
+                beta = 7, #Hmin = beta -Changes the y intercept (the lower limit) for the Weibull model- recruit size?
+                k = 0.01, #Often described as the growth rate --\> related to the slope of the line for the Weibull model 
+                delta = 0.5, #Sets the inflection point - when you shift b/t concave to convex for the Weibull model 
                 flowering.logit = logit(0.25),
                 fruitPerPlant = 30)
 
@@ -125,8 +127,10 @@ pheno <- pheno %>%
   rename_with(.fn = \(n) str_replace(n, "\\.logit\\.prob", "\\.prob")) %>%
   mutate(germinated = rbinom(n(), size=1, prob=germination.prob),
          established = ifelse(germinated, rbinom(n(), size=1, prob=establishment.prob), NA),
-         init.size,
-         rel.growth = ifelse(established, rel.growth, NA),
+         beta, 
+         alpha, 
+         k = ifelse(established, k, NA),
+         delta = ifelse(established, delta, NA),
          y1surv = ifelse(established, rbinom(n(), size =1, prob=y1surv.prob), NA),
          flowered = ifelse(established, rbinom(n(), size = 1, prob = flowering.prob), NA),
          fruitPerPlant = ifelse(flowered, fruitPerPlant, NA))
@@ -140,54 +144,9 @@ pheno %>%
   facet_wrap(~name, scales="free")
 ```
 
-## Try to get weekly growth data 
-If we know the initial size and the growth rate then we can get weekly size data, right?
-RGR = (ln(S2)-ln(S1)) / (t2-t1))
-t2-t1 = 1 week
-RGR = ln(S2)-ln(S1)
-RGR+ln(S1)=ln(S2)
-```{r}
-#weekly size function 
-weekly.size <- function(s1, RGR, na.rm=FALSE) {
-  if_else(s1==0, 0, 
-          exp(RGR + log(s1)))
-}
+## Try to get weekly growth data
 
-#weekly.size(7, 1) #function works 
-
-pheno_weekly_test <- pheno %>% 
-  filter(init.size>=0) %>%  #pheno has negatives for init.size - this is a temporary fix until I can figure out how to set the min as 0 
-  mutate(size.week2=weekly.size(init.size, rel.growth, na.rm = TRUE))
-
-#next step would be to automate this to generate the desired number of weeks 
-##would probably want similar structure to "wl2_all_2023_timeprep" in "IntBio_WL2_2023.Rmd" script" - one row for each individual and each week
-##maybe a for loop that loops around weeks to generates size t+1? and then bind_rows or something to combine all the output?
-```
-
-```{r}
-#weekly size function 
-weekly.size <- function(s1, RGR, na.rm=FALSE) {
-  if_else(s1==0, 0, 
-          exp(RGR + log(s1)))
-}
-
-pheno_weekly <- pheno %>% 
-  mutate(Indiv_ID=row_number()) %>% 
-  slice(rep(1:n(), each = 12)) %>% 
-  group_by(Indiv_ID) %>% 
-  mutate(week=row_number(),
-         week_next=lead(week, order_by = week), 
-         elapsed_days= week_next - week, #interval length in days,
-         elapsed_weeks = as.integer(elapsed_days)/7) %>%  #interval length in weeks 
-  filter(init.size>=0) %>%  #pheno has negatives for init.size - this is a temporary fix until I can figure out how to set the min as 0 
-  mutate(size=if_else(week==1, init.size, NA)) %>% 
-  mutate(size_prev=lag(size, order_by=week)) %>% 
-  mutate(size=map(week, weekly.size, s1=size_prev, RGR=rel.growth, na.rm = TRUE))
-#Caused by error in `.f()`:
-#! unused argument (.x[[i]])
-```
-
-## Model growth with the Weibull model
+### Model growth with the Weibull model
 
 ```{r}
 weibull <- function (t, alpha, beta, k, delta) {
@@ -195,13 +154,32 @@ weibull <- function (t, alpha, beta, k, delta) {
   return(result)
 }
 
-growth <- tibble(time = seq(0,100,.1)) %>%
-  mutate(model1 = weibull(t = time,
+##Example:
+growth <- tibble(week = seq(0,12, 1)) %>%
+  mutate(size = weibull(t = week,
                           alpha = 40, #Hmax = alpha -  Sets the asymptote (max growth)
                           beta = 0.5, #Hmin = beta - Changes the y intercept (the lower limit)
                           k = 0.01, #k - Often described as the growth rate --\> related to the slope of the line
                           delta = 0.5)) #delta - Sets the inflection point - when you shift b/t concave to convex
 
-growth %>%  ggplot(aes(x=time, y=model1)) +
+growth %>%  ggplot(aes(x=week, y=size)) +
   geom_line()
 ```
+
+### Pheno weekly
+```{r}
+pheno_weekly <- pheno %>% 
+  mutate(Indiv_ID=row_number()) %>% 
+  slice(rep(1:n(), each = 12)) %>% 
+  group_by(Indiv_ID) %>% 
+  mutate(week=row_number(),
+         week_next=lead(week, order_by = week), 
+         elapsed_days= week_next - week, #interval length in days
+         size = if_else(week==1, beta, weibull(t = week,
+                        alpha = alpha,
+                        beta = beta,
+                        k = k, 
+                        delta = delta)))
+pheno_weekly
+```
+
