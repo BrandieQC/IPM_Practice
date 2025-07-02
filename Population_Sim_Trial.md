@@ -1,7 +1,7 @@
 ---
 title: "Population_Sim_Trial"
 author: "Brandie QC"
-date: "`r Sys.Date()`"
+date: "2025-07-02"
 output: 
   html_document: 
     keep_md: true
@@ -10,9 +10,7 @@ editor_options:
     wrap: 72
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
+
 
 # Population Simulation Attempt
 
@@ -56,16 +54,45 @@ Rishav demoed AlphaRSim:
 
 ## Libraries
 
-```{r}
+
+``` r
 library(AlphaSimR)
+```
+
+```
+## Loading required package: R6
+```
+
+``` r
 library(tidyverse)
+```
+
+```
+## ── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+## ✔ dplyr     1.1.4     ✔ readr     2.1.5
+## ✔ forcats   1.0.0     ✔ stringr   1.5.1
+## ✔ ggplot2   3.5.1     ✔ tibble    3.2.1
+## ✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+## ✔ purrr     1.0.2
+```
+
+```
+## ── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+## ✖ dplyr::filter() masks stats::filter()
+## ✖ dplyr::lag()    masks stats::lag()
+## ✖ dplyr::mutate() masks AlphaSimR::mutate()
+## ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+```
+
+``` r
 logit <- brms::logit_scaled
 inv_logit <- brms::inv_logit_scaled
 ```
 
 ## Create Founder Population
 
-```{r}
+
+``` r
 founderPop = runMacs(
   nInd = 1000, #number of individuals to simulate 
   nChr = 10, #number of chromosomes to simulate - may not be important to match to Streps' 14
@@ -76,7 +103,8 @@ founderPop = runMacs(
 
 ## Define Genetic Architecture for Traits
 
-```{r}
+
+``` r
 SP <- SimParam$new(founderPop)
 #Starts the process of building a new simulation by creating a new SimParam object and assigning a founder population to the class.
 
@@ -110,19 +138,42 @@ SP$setVarE(h2=rep(0.5, length(traitMeans))) #set heritability to 0.5
 
 ## Create Initial Population
 
-```{r}
+
+``` r
 pop = newPop(founderPop, simParam = SP)
 pop1 <- setPheno(pop)
 ```
 
-```{r}
+
+``` r
 pheno <- pop1@pheno %>% as_tibble()
 dim(pheno)
+```
+
+```
+## [1] 1000    9
+```
+
+``` r
 head(pheno)
 ```
 
+```
+## # A tibble: 6 × 9
+##   germination.logit establishment.logit y1surv.logit alpha  beta       k delta
+##               <dbl>               <dbl>        <dbl> <dbl> <dbl>   <dbl> <dbl>
+## 1            -0.632               0.700       -0.218  35.3  6.58 0.0112  0.536
+## 2            -0.658               0.996       -0.211  31.2  7.06 0.0140  0.737
+## 3            -1.00                0.727       -0.197  55.6  6.46 0.0109  0.765
+## 4            -0.786               0.920       -0.167  43.9  8.45 0.00902 0.151
+## 5            -0.412               0.159       -0.103  22.4  6.59 0.0124  0.212
+## 6            -0.516               0.664       -0.215  54.3  8.55 0.00779 0.475
+## # ℹ 2 more variables: flowering.logit <dbl>, fruitPerPlant <dbl>
+```
+
 ### Convert pheno logits to probabilities and phenotypes
-```{r}
+
+``` r
 pheno <- pheno %>%
   mutate(across(ends_with(".logit"), .fns = inv_logit, 
          .names = "{.col}.prob")) %>%
@@ -138,7 +189,8 @@ pheno <- pheno %>%
          fruitPerPlant = ifelse(flowered, fruitPerPlant, NA))
 ```
 
-```{r}
+
+``` r
 pheno %>%
   pivot_longer(everything()) %>%
   ggplot(aes(x=value)) +
@@ -146,11 +198,23 @@ pheno %>%
   facet_wrap(~name, scales="free")
 ```
 
+```
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+```
+
+```
+## Warning: Removed 4636 rows containing non-finite outside the scale range
+## (`stat_bin()`).
+```
+
+![](Population_Sim_Trial_files/figure-html/unnamed-chunk-7-1.png)<!-- -->
+
 ## Try to get weekly growth data
 
 ### Model growth with the Weibull model
 
-```{r}
+
+``` r
 weibull <- function (t, alpha, beta, k, delta) {
   result <- alpha - (alpha - beta) * exp(-(k * t)^delta)
   return(result)
@@ -168,8 +232,11 @@ growth %>%  ggplot(aes(x=week, y=size)) +
   geom_line()
 ```
 
+![](Population_Sim_Trial_files/figure-html/unnamed-chunk-8-1.png)<!-- -->
+
 ### Pheno weekly
-```{r}
+
+``` r
 pheno_weekly <- pheno %>% 
   mutate(Indiv_ID=row_number()) %>% 
   slice(rep(1:n(), each = 12)) %>% #duplicate each row 12 times 
@@ -184,5 +251,28 @@ pheno_weekly <- pheno %>%
                         k = k, 
                         delta = delta)))
 pheno_weekly
+```
+
+```
+## # A tibble: 12,000 × 22
+## # Groups:   Indiv_ID [1,000]
+##    germination.logit establishment.logit y1surv.logit alpha  beta     k delta
+##                <dbl>               <dbl>        <dbl> <dbl> <dbl> <dbl> <dbl>
+##  1            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  2            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  3            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  4            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  5            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  6            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  7            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  8            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  9            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+## 10            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+## # ℹ 11,990 more rows
+## # ℹ 15 more variables: flowering.logit <dbl>, fruitPerPlant <dbl>,
+## #   germination.prob <dbl>, establishment.prob <dbl>, y1surv.prob <dbl>,
+## #   flowering.prob <dbl>, germinated <int>, established <int>, y1surv <int>,
+## #   flowered <int>, Indiv_ID <int>, week <int>, week_next <int>,
+## #   elapsed_days <int>, size <dbl>
 ```
 
