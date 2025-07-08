@@ -43,9 +43,9 @@ unique(wl2_size_2023$parent.pop) #all 23 pops!
 wl2_mort_2023 <- read_csv("data/WL2_Mortality_2023.csv") %>% 
   select(block, BedLoc, Genotype, parent.pop=pop, mf:death.date) %>% 
   mutate(parent.pop= str_replace(parent.pop, "Y08", "YO8")) %>% 
-  mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4")) %>% 
-mutate(Genotype= str_replace(Genotype, "Y08", "YO8")) %>% 
-  mutate(Genotype= str_replace(Genotype, "Y04", "YO4")) 
+  mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4"))# %>% 
+#mutate(Genotype= str_replace(Genotype, "Y08", "YO8"))# %>% 
+ # mutate(Genotype= str_replace(Genotype, "Y04", "YO4")) 
 unique(wl2_mort_2023$parent.pop) #all 23 pops!
 
 #wl2_size_2023 %>% filter(Genotype=="YO4_2_2") #I_18_C

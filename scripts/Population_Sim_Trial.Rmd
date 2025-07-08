@@ -42,9 +42,12 @@ founderPop = runMacs(
 )
 ```
 
-## Define Genetic Architecture for Traits
-*CHANGE GERM PROB ACCORDING TO DATA MAYA SENT 
+## Get germ prob estimate from Maya's data
+```{r}
+germprob <- read_csv("")
+```
 
+## Define Genetic Architecture for Traits
 ```{r}
 SP <- SimParam$new(founderPop)
 #Starts the process of building a new simulation by creating a new SimParam object and assigning a founder population to the class.
