@@ -16,7 +16,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Population Simulation Attempt
 
-Rishav demoed AlphaRSim:
+Rishav demoed AlphaSimR:
 <https://cran.r-project.org/web/packages/AlphaSimR/index.html>
 
 -   Rishav's demo is on his GitHub:
@@ -44,7 +44,15 @@ founderPop = runMacs(
 
 ## Get germ prob estimate from Maya's data
 ```{r}
-germprob <- read_csv("")
+germprob <- read_csv("../data/WL2_2025_germ_prob.csv")
+summary(germprob) #overall mean prob = 0.39
+
+germprob %>% 
+  group_by(Cross_Type) %>% 
+  summarise(n=n(), meangerm=mean(prob)) #parents mean = 0.18 (lowest); F2s = highest 0.47
+
+germprob %>% 
+  filter(Cross_Type=="Parent") #WL2 prob = 0.27
 ```
 
 ## Define Genetic Architecture for Traits
@@ -52,7 +60,7 @@ germprob <- read_csv("")
 SP <- SimParam$new(founderPop)
 #Starts the process of building a new simulation by creating a new SimParam object and assigning a founder population to the class.
 
-traitMeans <- c(germination.logit = logit(0.33), #logit to scale it (from gene --> trait)
+traitMeans <- c(germination.logit = logit(0.18), #logit to scale it (from gene --> trait); used avg for all parents from Maya's data 
                 establishment.logit = logit(0.67),
                 y1surv.logit = logit(0.45),
                 alpha = 40, #Hmax = alpha -Sets the asymptote (max growth) for the Weibull model 
@@ -170,7 +178,9 @@ genotype_scores <- pop1@gv %>%
 pheno_weekly_merged <- pheno_weekly %>%
     left_join(genotype_scores, by = "Indiv_ID", suffix = c("_pheno", "_geno"))
 
-pheno_weekly_merged |>
+pheno_weekly_merged %>% 
 select(Indiv_ID, week, size, week_next, germination.logit_geno, germination.logit_pheno)
+
+write_csv(pheno_weekly_merged, "../output/PopSim_Phenos-Genos_v1.csv")
 ```
 

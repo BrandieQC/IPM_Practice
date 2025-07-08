@@ -1,7 +1,7 @@
 ---
 title: "Population_Sim_Trial"
 author: "Brandie QC"
-date: "2025-07-02"
+date: "2025-07-08"
 output: 
   html_document: 
     keep_md: true
@@ -14,39 +14,7 @@ editor_options:
 
 # Population Simulation Attempt
 
-Suggested parameters from Julin:
-
--   1000 F2s (or just 1000 individuals)
-
-    -   Done with runMacs
-
--   100 loci per trait with some kind of (expotnetial?) decay in effect
-    size
-
-    -   Use nQtlPerChr??
-
--   Traits:
-
-    -   Germination
-
-    -   Initial size
-
-    -   Establishment
-
-    -   Growth rate
-
-    -   Flowering probability
-
-        -   Ideally would depend on size... - do this through
-            correlation matrix?
-
-    -   Fruit per plant
-
-        -   Ideally would depend on size...
-
-    -   others?
-
-Rishav demoed AlphaRSim:
+Rishav demoed AlphaSimR:
 <https://cran.r-project.org/web/packages/AlphaSimR/index.html>
 
 -   Rishav's demo is on his GitHub:
@@ -101,14 +69,81 @@ founderPop = runMacs(
 )
 ```
 
-## Define Genetic Architecture for Traits
+## Get germ prob estimate from Maya's data
 
+``` r
+germprob <- read_csv("../data/WL2_2025_germ_prob.csv")
+```
+
+```
+## Rows: 66 Columns: 4
+## ── Column specification ────────────────────────────────────────────────────────
+## Delimiter: ","
+## chr (2): pop.id, Cross_Type
+## dbl (2): prob, SE
+## 
+## ℹ Use `spec()` to retrieve the full column specification for this data.
+## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+```
+
+``` r
+summary(germprob) #overall mean prob = 0.39
+```
+
+```
+##     pop.id               prob                 SE             Cross_Type       
+##  Length:66          Min.   :0.0000001   Min.   :0.0000847   Length:66         
+##  Class :character   1st Qu.:0.1751701   1st Qu.:0.0328350   Class :character  
+##  Mode  :character   Median :0.3541667   Median :0.0755195   Mode  :character  
+##                     Mean   :0.3856414   Mean   :0.0866275                     
+##                     3rd Qu.:0.5484085   3rd Qu.:0.1155918                     
+##                     Max.   :0.9999999   Max.   :0.3535534
+```
+
+``` r
+germprob %>% 
+  group_by(Cross_Type) %>% 
+  summarise(n=n(), meangerm=mean(prob)) #parents mean = 0.18 (lowest); F2s = highest 0.47
+```
+
+```
+## # A tibble: 4 × 3
+##   Cross_Type     n meangerm
+##   <chr>      <int>    <dbl>
+## 1 BC1           14    0.414
+## 2 F1            17    0.359
+## 3 F2            25    0.469
+## 4 Parent        10    0.182
+```
+
+``` r
+germprob %>% 
+  filter(Cross_Type=="Parent") #WL2 prob = 0.27
+```
+
+```
+## # A tibble: 10 × 4
+##    pop.id   prob     SE Cross_Type
+##    <chr>   <dbl>  <dbl> <chr>     
+##  1 BH     0.190  0.0495 Parent    
+##  2 CC     0.0635 0.0307 Parent    
+##  3 DPR    0.222  0.0524 Parent    
+##  4 LV1    0.0317 0.0221 Parent    
+##  5 SQ3    0.254  0.0548 Parent    
+##  6 TM2    0.170  0.0219 Parent    
+##  7 WL1    0.333  0.0594 Parent    
+##  8 WL2    0.272  0.0258 Parent    
+##  9 WV     0.222  0.0524 Parent    
+## 10 YO11   0.0635 0.0307 Parent
+```
+
+## Define Genetic Architecture for Traits
 
 ``` r
 SP <- SimParam$new(founderPop)
 #Starts the process of building a new simulation by creating a new SimParam object and assigning a founder population to the class.
 
-traitMeans <- c(germination.logit = logit(0.33), #logit to scale it (from gene --> trait)
+traitMeans <- c(germination.logit = logit(0.18), #logit to scale it (from gene --> trait); used avg for all parents from Maya's data 
                 establishment.logit = logit(0.67),
                 y1surv.logit = logit(0.45),
                 alpha = 40, #Hmax = alpha -Sets the asymptote (max growth) for the Weibull model 
@@ -133,7 +168,6 @@ SP$addTraitA(nQtlPerChr = 10,
 ##name = optional name for trait(s)
 
 SP$setVarE(h2=rep(0.5, length(traitMeans))) #set heritability to 0.5 
-#Error in SP$setVarE(h2 = rep(0.5, length(traitMeans))) : all(private$.varG > 0) is not TRUE -  Y1 SURV = logit(0.5)
 ```
 
 ## Create Initial Population
@@ -160,14 +194,14 @@ head(pheno)
 
 ```
 ## # A tibble: 6 × 9
-##   germination.logit establishment.logit y1surv.logit alpha  beta       k delta
-##               <dbl>               <dbl>        <dbl> <dbl> <dbl>   <dbl> <dbl>
-## 1            -0.632               0.700       -0.218  35.3  6.58 0.0112  0.536
-## 2            -0.658               0.996       -0.211  31.2  7.06 0.0140  0.737
-## 3            -1.00                0.727       -0.197  55.6  6.46 0.0109  0.765
-## 4            -0.786               0.920       -0.167  43.9  8.45 0.00902 0.151
-## 5            -0.412               0.159       -0.103  22.4  6.59 0.0124  0.212
-## 6            -0.516               0.664       -0.215  54.3  8.55 0.00779 0.475
+##   germination.logit establishment.logit y1surv.logit alpha  beta      k delta
+##               <dbl>               <dbl>        <dbl> <dbl> <dbl>  <dbl> <dbl>
+## 1             -2.59               0.896       -0.170  27.5  6.96 0.0123 0.574
+## 2             -1.57               0.549       -0.169  44.9  7.17 0.0146 0.499
+## 3             -1.32               0.781       -0.228  49.9  6.48 0.0129 0.420
+## 4             -1.26               1.15        -0.287  56.7  9.11 0.0101 0.613
+## 5             -1.34               0.487       -0.298  33.2  8.33 0.0115 0.624
+## 6             -1.81               0.740       -0.112  17.5  8.47 0.0150 0.651
 ## # ℹ 2 more variables: flowering.logit <dbl>, fruitPerPlant <dbl>
 ```
 
@@ -203,11 +237,11 @@ pheno %>%
 ```
 
 ```
-## Warning: Removed 4636 rows containing non-finite outside the scale range
+## Warning: Removed 5224 rows containing non-finite outside the scale range
 ## (`stat_bin()`).
 ```
 
-![](Population_Sim_Trial_files/figure-html/unnamed-chunk-7-1.png)<!-- -->
+![](Population_Sim_Trial_files/figure-html/unnamed-chunk-8-1.png)<!-- -->
 
 ## Try to get weekly growth data
 
@@ -232,7 +266,7 @@ growth %>%  ggplot(aes(x=week, y=size)) +
   geom_line()
 ```
 
-![](Population_Sim_Trial_files/figure-html/unnamed-chunk-8-1.png)<!-- -->
+![](Population_Sim_Trial_files/figure-html/unnamed-chunk-9-1.png)<!-- -->
 
 ### Pheno weekly
 
@@ -258,21 +292,61 @@ pheno_weekly
 ## # Groups:   Indiv_ID [1,000]
 ##    germination.logit establishment.logit y1surv.logit alpha  beta     k delta
 ##                <dbl>               <dbl>        <dbl> <dbl> <dbl> <dbl> <dbl>
-##  1            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-##  2            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-##  3            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-##  4            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-##  5            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-##  6            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-##  7            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-##  8            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-##  9            -0.632               0.700       -0.218  35.3  6.58    NA    NA
-## 10            -0.632               0.700       -0.218  35.3  6.58    NA    NA
+##  1             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  2             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  3             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  4             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  5             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  6             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  7             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  8             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  9             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+## 10             -2.59               0.896       -0.170  27.5  6.96    NA    NA
 ## # ℹ 11,990 more rows
 ## # ℹ 15 more variables: flowering.logit <dbl>, fruitPerPlant <dbl>,
 ## #   germination.prob <dbl>, establishment.prob <dbl>, y1surv.prob <dbl>,
 ## #   flowering.prob <dbl>, germinated <int>, established <int>, y1surv <int>,
 ## #   flowered <int>, Indiv_ID <int>, week <int>, week_next <int>,
 ## #   elapsed_days <int>, size <dbl>
+```
+
+## Extract Genotype Scores
+
+``` r
+# Extract genotype scores for each individual
+genotype_scores <- pop1@gv %>%
+    as_tibble() %>%
+    rownames_to_column(var = "Indiv_ID") %>%
+    mutate(Indiv_ID = as.integer(Indiv_ID)) %>%
+    select(Indiv_ID, everything())
+
+# Join genotype scores with phenotypic data
+pheno_weekly_merged <- pheno_weekly %>%
+    left_join(genotype_scores, by = "Indiv_ID", suffix = c("_pheno", "_geno"))
+
+pheno_weekly_merged %>% 
+select(Indiv_ID, week, size, week_next, germination.logit_geno, germination.logit_pheno)
+```
+
+```
+## # A tibble: 12,000 × 6
+## # Groups:   Indiv_ID [1,000]
+##    Indiv_ID  week  size week_next germination.logit_geno germination.logit_pheno
+##       <int> <int> <dbl>     <int>                  <dbl>                   <dbl>
+##  1        1     1  6.96         2                  -1.99                   -2.59
+##  2        1     2 NA            3                  -1.99                   -2.59
+##  3        1     3 NA            4                  -1.99                   -2.59
+##  4        1     4 NA            5                  -1.99                   -2.59
+##  5        1     5 NA            6                  -1.99                   -2.59
+##  6        1     6 NA            7                  -1.99                   -2.59
+##  7        1     7 NA            8                  -1.99                   -2.59
+##  8        1     8 NA            9                  -1.99                   -2.59
+##  9        1     9 NA           10                  -1.99                   -2.59
+## 10        1    10 NA           11                  -1.99                   -2.59
+## # ℹ 11,990 more rows
+```
+
+``` r
+write_csv(pheno_weekly_merged, "../output/PopSim_Phenos-Genos_v1.csv")
 ```
 
