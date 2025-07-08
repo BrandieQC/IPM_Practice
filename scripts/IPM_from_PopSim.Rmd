@@ -1,0 +1,121 @@
+---
+title: "IPM_from_PopSim"
+author: "Brandie QC"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# IPM from Population Simulation
+
+\*Simulations done in "Population_Sim_Trial.Rmd" file (currently using AlphaSimR)
+
+**Goal:** Compare IPM created from just phenotypes from the simulation to an IPM created from phenotypes + genotype scores.
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(broom)
+library(broom.mixed)
+library(magrittr)
+library(lmerTest)
+conflicted::conflicts_prefer(lmerTest::lmer)
+conflicted::conflicts_prefer(dplyr::filter)
+```
+
+## Load the data
+```{r}
+simpop <- read_csv("../output/PopSim_Phenos-Genos_v1.csv")
+names(simpop)
+#logit_pheno = scaled probability/phenotype
+#_geno = genotype score for that trait 
+#size = height calculated from simulated Weibull parameters (alpha, beta, k, and delta)
+####Note: we don't have a genotype score for this since it's not explicitly estimated by the pop sim...
+#elapsed_weeks = interval between weeks - should be all be 1 in this data
+```
+
+### Add size next and weekly surv
+```{r}
+unique(simpop$established) #NA = did not germinate, 1 = established (survived first 3 weeks in field); 0 = did not establish
+unique(simpop$y1surv) #NA = did not establish, 1 = survived to week 12; 0 = did not survive 
+simpop %>% select(Indiv_ID, germinated, established, y1surv, k_pheno, week, size) %>% filter(Indiv_ID<5)
+
+simpop_timeprep <- simpop %>%
+  select(-alpha_pheno, -alpha_geno, -beta_pheno, -beta_geno, -k_pheno, -k_geno, -delta_pheno, -delta_geno) %>% 
+  group_by(Indiv_ID) %>% 
+  mutate(size = if_else(germinated==0, NA, #if a plant did not germinate it cannot have a size at any time
+                        size), #in popsim code already have week 1 size = beta (min size)
+         size_next = lead(size, order_by = week), #next time point's size; *see note about not having a genotype score for this...
+         surv=if_else(germinated==0, NA, #surv = NA if you did not germ 
+                        if_else(week==1, 1, #if you did germinate, assume you survived to week 1 (equivalent to pre-transplant size time point)
+                                if_else(established==0, 0, #surv = 0 after week 1 if you did not establish 
+                                        if_else(week<5, 1, #if you did establish, your surv is equal to 1 for the first 3 weeks post-transplant 
+                                                y1surv) #your survival for weeks 5-12 is then equal to your y1surv
+                                        )))) %>% #note we only have establishment and y1surv survival from the pop sim --> little weekly variation 
+  #also geno_score is for the pheno in logit scale... does that matter?
+  ungroup() %>%
+  mutate(weeks = as.numeric(week - 1), #Weeks since week 1 (equivalent to pre-transplant or initial size) 
+         size = if_else(surv==0, NA, size) #no size if no surv 
+         ) %>%   
+  drop_na(surv) #for models
+
+simpop_timeprep %>% filter(Indiv_ID<10) %>% select(Indiv_ID, week, weeks, germinated, established, y1surv, size, size_next, surv) #look at data for a few indivs to see if above worked
+simpop %>% filter(Indiv_ID==4) #was removed from the time prep dataset since it did not germinate --> no size or surv 
+
+simpop_timeprep_size <- simpop_timeprep %>% drop_na(size, size_next) #for size models 
+```
+
+### Scaling and transformations
+```{r, eval=FALSE}
+simpop_timeprep %>%  #skewed
+  ggplot(aes(x=size)) +
+  geom_histogram()
+
+simpop_timeprep_scaled <- simpop_timeprep %>% 
+  mutate(logSize=log(size))  #transform height to be more normal - only for surv models 
+#this doesn't work because if you take NAs for size out then you only have surv = 1 ...
+```
+
+## Survival Models
+
+### Phenos Only
+
+#### Predicted vs. Observed Survival
+
+### Phenos + Genos
+
+#### Predicted vs. Observed Survival
+
+## Growth Models
+
+### Observed Patterns
+
+### Phenos Only
+
+#### Predicted vs. Observed Growth
+
+### Phenos + Genos
+
+#### Predicted vs. Observed Growth
+
+## P Matrix
+
+### Make a dataframe to store the parameters
+
+### Use broom:tidy to create a df with the coef from each model
+
+### Define the functions
+
+### Define the structure of the IPM
+
+### Make the matrices (G, S, and P)
+
+### Plot the matrix
+
+### Check for eviction
