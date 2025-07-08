@@ -38,9 +38,9 @@ conflicted::conflicts_prefer(dplyr::filter)
 ## Load the data
 
 ```{r}
-wl2_size_2023 <- read_csv("data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
+wl2_size_2023 <- read_csv("../data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
 unique(wl2_size_2023$parent.pop) #all 23 pops!
-wl2_mort_2023 <- read_csv("data/WL2_Mortality_2023.csv") %>% 
+wl2_mort_2023 <- read_csv("../data/WL2_Mortality_2023.csv") %>% 
   select(block, BedLoc, Genotype, parent.pop=pop, mf:death.date) %>% 
   mutate(parent.pop= str_replace(parent.pop, "Y08", "YO8")) %>% 
   mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4"))# %>% 
@@ -55,14 +55,14 @@ unique(wl2_mort_2023$parent.pop) #all 23 pops!
 #wl2_mort_2023 %>% filter(BedLoc=="I_18_C")
 #wl2_mort_2023 %>% filter(BedLoc=="B_58_A")
 
-wl2_fruits_2023 <- read_csv("data/WL2_2023_Fruits_forIPMs.csv") %>% 
+wl2_fruits_2023 <- read_csv("../data/WL2_2023_Fruits_forIPMs.csv") %>% 
   rename(parent.pop=pop) %>% 
   filter(BedLoc!="K_5_C") %>% #get rid of duplicate locations
   filter(BedLoc!="B_32_A") %>% #get rid of duplicate locations
   filter(!is.na(parent.pop), !str_detect(Genotype, ".*buff*"))  #remove buffers 
 unique(wl2_fruits_2023$parent.pop) #only TM2 made fruits
 
-wl2_phenology_2023 <- read_csv("data/WL2_2023_PhenologyDates.csv") %>% 
+wl2_phenology_2023 <- read_csv("../data/WL2_2023_PhenologyDates.csv") %>% 
   unite("BedLoc", bed:bed.col, remove = FALSE) %>% 
   unite("Genotype", pop:rep, remove = FALSE) %>% 
   rename(parent.pop=pop) %>% 

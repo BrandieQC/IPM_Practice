@@ -23,7 +23,7 @@ data(dataIPMpackHypericumCov)
 
 ### Read in the data
 ```{r}
-d <- read.csv("data/Intro_to_IPMs_Exercises_Data.csv")
+d <- read.csv("../data/Intro_to_IPMs_Exercises_Data.csv")
 head(d) #adults at head of data frame
 tail(d) #recruits observed in second year at tail
 #make sure to use NAs appropriately (e.g. if an individual dies (0), it can't have a size the next year --> sizeNext=NA)

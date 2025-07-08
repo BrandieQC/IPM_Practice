@@ -50,9 +50,9 @@ conflicted::conflict_prefer("lag", "dplyr")
 
 ## Load the data
 ```{r}
-wl2_size_2023 <- read_csv("data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
+wl2_size_2023 <- read_csv("../data/WL2-2023_Size_Combined.csv") %>% select(survey_date, Genotype, parent.pop, height.cm, long.leaf.cm)
 unique(wl2_size_2023$parent.pop) #all 23 pops!
-wl2_mort_2023 <- read_csv("data/WL2_Mortality_2023.csv") %>% 
+wl2_mort_2023 <- read_csv("../data/WL2_Mortality_2023.csv") %>% 
   select(block, BedLoc, Genotype, parent.pop=pop, mf:death.date) %>% 
   mutate(parent.pop= str_replace(parent.pop, "Y08", "YO8")) %>% 
   mutate(parent.pop= str_replace(parent.pop, "Y04", "YO4")) %>% 
@@ -144,7 +144,7 @@ wl2_all_2023_timeprep_scaled %>% #better
 ## Add in weekly climate data
 
 ```{r}
-swc_raw <- read_csv("data/WL2_2023_Bed_C_Soil_Moisture_Corrected.csv") %>% 
+swc_raw <- read_csv("../data/WL2_2023_Bed_C_Soil_Moisture_Corrected.csv") %>% 
   mutate(Date_Time=mdy_hm(Date_Time))
 head(swc_raw)
 
@@ -166,7 +166,7 @@ summary(swc_daily_summary)
 
             
 ```{r}
-soil_temp_raw <- read_csv("data/WL2_2022_2023_iButton_Data_Corrected.csv") %>% 
+soil_temp_raw <- read_csv("../data/WL2_2022_2023_iButton_Data_Corrected.csv") %>% 
   mutate(Date_Time=mdy_hm(Date_Time))
 head(soil_temp_raw)
 
