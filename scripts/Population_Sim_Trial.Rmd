@@ -155,7 +155,7 @@ pheno_weekly <- pheno %>%
   group_by(Indiv_ID) %>% 
   mutate(week=row_number(), #12 weeks for each indiv
          week_next=lead(week, order_by = week), 
-         elapsed_days= week_next - week, #interval length in days
+         elapsed_weeks= week_next - week, #interval length in weeks
          size = if_else(week==1, beta, #size in week 1 is the min size (beta)
                         weibull(t = week, #otherwise use the weibull formula to calculate size
                         alpha = alpha,

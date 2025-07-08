@@ -194,14 +194,14 @@ head(pheno)
 
 ```
 ## # A tibble: 6 × 9
-##   germination.logit establishment.logit y1surv.logit alpha  beta      k delta
-##               <dbl>               <dbl>        <dbl> <dbl> <dbl>  <dbl> <dbl>
-## 1             -2.59               0.896       -0.170  27.5  6.96 0.0123 0.574
-## 2             -1.57               0.549       -0.169  44.9  7.17 0.0146 0.499
-## 3             -1.32               0.781       -0.228  49.9  6.48 0.0129 0.420
-## 4             -1.26               1.15        -0.287  56.7  9.11 0.0101 0.613
-## 5             -1.34               0.487       -0.298  33.2  8.33 0.0115 0.624
-## 6             -1.81               0.740       -0.112  17.5  8.47 0.0150 0.651
+##   germination.logit establishment.logit y1surv.logit alpha  beta       k delta
+##               <dbl>               <dbl>        <dbl> <dbl> <dbl>   <dbl> <dbl>
+## 1            -1.92                0.558       -0.148  59.8  5.01 0.00873 0.543
+## 2            -1.76                0.771       -0.278  52.1  7.74 0.00902 0.376
+## 3            -1.36                0.586       -0.160  56.8  6.20 0.0155  0.570
+## 4            -0.842               0.839       -0.259  53.5  4.00 0.0135  0.695
+## 5            -1.48                0.871       -0.294  27.4  7.37 0.00817 0.137
+## 6            -2.11                0.709       -0.149  46.4  7.53 0.00668 0.229
 ## # ℹ 2 more variables: flowering.logit <dbl>, fruitPerPlant <dbl>
 ```
 
@@ -237,7 +237,7 @@ pheno %>%
 ```
 
 ```
-## Warning: Removed 5224 rows containing non-finite outside the scale range
+## Warning: Removed 5179 rows containing non-finite outside the scale range
 ## (`stat_bin()`).
 ```
 
@@ -277,7 +277,7 @@ pheno_weekly <- pheno %>%
   group_by(Indiv_ID) %>% 
   mutate(week=row_number(), #12 weeks for each indiv
          week_next=lead(week, order_by = week), 
-         elapsed_days= week_next - week, #interval length in days
+         elapsed_weeks= week_next - week, #interval length in weeks
          size = if_else(week==1, beta, #size in week 1 is the min size (beta)
                         weibull(t = week, #otherwise use the weibull formula to calculate size
                         alpha = alpha,
@@ -292,22 +292,22 @@ pheno_weekly
 ## # Groups:   Indiv_ID [1,000]
 ##    germination.logit establishment.logit y1surv.logit alpha  beta     k delta
 ##                <dbl>               <dbl>        <dbl> <dbl> <dbl> <dbl> <dbl>
-##  1             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-##  2             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-##  3             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-##  4             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-##  5             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-##  6             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-##  7             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-##  8             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-##  9             -2.59               0.896       -0.170  27.5  6.96    NA    NA
-## 10             -2.59               0.896       -0.170  27.5  6.96    NA    NA
+##  1             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+##  2             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+##  3             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+##  4             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+##  5             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+##  6             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+##  7             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+##  8             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+##  9             -1.92               0.558       -0.148  59.8  5.01    NA    NA
+## 10             -1.92               0.558       -0.148  59.8  5.01    NA    NA
 ## # ℹ 11,990 more rows
 ## # ℹ 15 more variables: flowering.logit <dbl>, fruitPerPlant <dbl>,
 ## #   germination.prob <dbl>, establishment.prob <dbl>, y1surv.prob <dbl>,
 ## #   flowering.prob <dbl>, germinated <int>, established <int>, y1surv <int>,
 ## #   flowered <int>, Indiv_ID <int>, week <int>, week_next <int>,
-## #   elapsed_days <int>, size <dbl>
+## #   elapsed_weeks <int>, size <dbl>
 ```
 
 ## Extract Genotype Scores
@@ -333,16 +333,16 @@ select(Indiv_ID, week, size, week_next, germination.logit_geno, germination.logi
 ## # Groups:   Indiv_ID [1,000]
 ##    Indiv_ID  week  size week_next germination.logit_geno germination.logit_pheno
 ##       <int> <int> <dbl>     <int>                  <dbl>                   <dbl>
-##  1        1     1  6.96         2                  -1.99                   -2.59
-##  2        1     2 NA            3                  -1.99                   -2.59
-##  3        1     3 NA            4                  -1.99                   -2.59
-##  4        1     4 NA            5                  -1.99                   -2.59
-##  5        1     5 NA            6                  -1.99                   -2.59
-##  6        1     6 NA            7                  -1.99                   -2.59
-##  7        1     7 NA            8                  -1.99                   -2.59
-##  8        1     8 NA            9                  -1.99                   -2.59
-##  9        1     9 NA           10                  -1.99                   -2.59
-## 10        1    10 NA           11                  -1.99                   -2.59
+##  1        1     1  5.01         2                  -1.71                   -1.92
+##  2        1     2 NA            3                  -1.71                   -1.92
+##  3        1     3 NA            4                  -1.71                   -1.92
+##  4        1     4 NA            5                  -1.71                   -1.92
+##  5        1     5 NA            6                  -1.71                   -1.92
+##  6        1     6 NA            7                  -1.71                   -1.92
+##  7        1     7 NA            8                  -1.71                   -1.92
+##  8        1     8 NA            9                  -1.71                   -1.92
+##  9        1     9 NA           10                  -1.71                   -1.92
+## 10        1    10 NA           11                  -1.71                   -1.92
 ## # ℹ 11,990 more rows
 ```
 
