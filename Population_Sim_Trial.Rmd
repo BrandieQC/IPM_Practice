@@ -16,38 +16,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Population Simulation Attempt
 
-Suggested parameters from Julin:
-
--   1000 F2s (or just 1000 individuals)
-
-    -   Done with runMacs
-
--   100 loci per trait with some kind of (expotnetial?) decay in effect
-    size
-
-    -   Use nQtlPerChr??
-
--   Traits:
-
-    -   Germination
-
-    -   Initial size
-
-    -   Establishment
-
-    -   Growth rate
-
-    -   Flowering probability
-
-        -   Ideally would depend on size... - do this through
-            correlation matrix?
-
-    -   Fruit per plant
-
-        -   Ideally would depend on size...
-
-    -   others?
-
 Rishav demoed AlphaRSim:
 <https://cran.r-project.org/web/packages/AlphaSimR/index.html>
 
@@ -75,6 +43,7 @@ founderPop = runMacs(
 ```
 
 ## Define Genetic Architecture for Traits
+*CHANGE GERM PROB ACCORDING TO DATA MAYA SENT 
 
 ```{r}
 SP <- SimParam$new(founderPop)
@@ -105,7 +74,6 @@ SP$addTraitA(nQtlPerChr = 10,
 ##name = optional name for trait(s)
 
 SP$setVarE(h2=rep(0.5, length(traitMeans))) #set heritability to 0.5 
-#Error in SP$setVarE(h2 = rep(0.5, length(traitMeans))) : all(private$.varG > 0) is not TRUE -  Y1 SURV = logit(0.5)
 ```
 
 ## Create Initial Population
@@ -184,5 +152,22 @@ pheno_weekly <- pheno %>%
                         k = k, 
                         delta = delta)))
 pheno_weekly
+```
+
+## Extract Genotype Scores
+```{r}
+# Extract genotype scores for each individual
+genotype_scores <- pop1@gv %>%
+    as_tibble() %>%
+    rownames_to_column(var = "Indiv_ID") %>%
+    mutate(Indiv_ID = as.integer(Indiv_ID)) %>%
+    select(Indiv_ID, everything())
+
+# Join genotype scores with phenotypic data
+pheno_weekly_merged <- pheno_weekly %>%
+    left_join(genotype_scores, by = "Indiv_ID", suffix = c("_pheno", "_geno"))
+
+pheno_weekly_merged |>
+select(Indiv_ID, week, size, week_next, germination.logit_geno, germination.logit_pheno)
 ```
 
