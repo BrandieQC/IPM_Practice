@@ -128,6 +128,21 @@ unique(wl2_all_2023_timeprep$week)
 unique(wl2_all_2023_timeprep$block)
 unique(wl2_all_2023_timeprep$parent.pop)
 unique(wl2_all_2023_timeprep$pop.mf)
+
+wl2_all_2023_timeprep %>% filter(surv==0)
+wl2_all_2023_timeprep %>% filter(BedLoc=="C_27_B")
+wl2_all_2023 %>% filter(BedLoc=="C_27_B")
+
+wl2_all_2023 %>% 
+  mutate(death.date=mdy(death.date)) %>% 
+  filter(survey_date==death.date) %>% 
+  filter(is.na(height.cm))
+
+wl2_all_2023 %>% 
+  mutate(death.date=mdy(death.date)) %>% 
+  filter(survey_date==death.date) %>% 
+  filter(!is.na(height.cm))
+#sometimes we have a height on the day of death and sometimes we don't...
 ```
 
 ### Scaling and transformations
