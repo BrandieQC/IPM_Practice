@@ -125,6 +125,25 @@ pheno %>%
   facet_wrap(~name, scales="free")
 ```
 
+## Equation for survival 
+Cox hazard equation doesn't really work 
+```{r}
+cox_hazaard <- function (t, h, beta1, x1) {
+  result <- h - exp(beta1*x1)
+  return(result)
+}
+
+##Example:
+surv <- tibble(week = seq(0,12, 1)) %>%
+  mutate(wksurv = cox_hazaard(t = week,
+                          h = 40, #baseline hazard (value of the hazard when no covariates)
+                          beta1 = 0.5, #beta = impact of (i.e. effect size) of covariates (in this case covariate 1)
+                          x1 = 0)) #x1 - one of p covariates 
+
+surv %>%  ggplot(aes(x=week, y=wksurv)) +
+  geom_line()
+```
+
 ## Try to get weekly growth data
 
 ### Model growth with the Weibull model
