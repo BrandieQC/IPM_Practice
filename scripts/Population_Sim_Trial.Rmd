@@ -63,10 +63,10 @@ SP <- SimParam$new(founderPop)
 traitMeans <- c(germination.logit = logit(0.18), #logit to scale it (from gene --> trait); used avg for all parents from Maya's data 
                 establishment.logit = logit(0.67),
                 y1surv.logit = logit(0.45),
-                alpha = 40, #Hmax = alpha -Sets the asymptote (max growth) for the Weibull model 
-                beta = 7, #Hmin = beta -Changes the y intercept (the lower limit) for the Weibull model- recruit size?
+                #alpha = 40, #Hmax = alpha -Sets the asymptote (max growth) for the Weibull model 
+                #beta = 7, #Hmin = beta -Changes the y intercept (the lower limit) for the Weibull model- recruit size?
                 k = 0.01, #Often described as the growth rate --\> related to the slope of the line for the Weibull model 
-                delta = 0.5, #Sets the inflection point - when you shift b/t concave to convex for the Weibull model 
+                #delta = 0.5, #Sets the inflection point - when you shift b/t concave to convex for the Weibull model 
                 flowering.logit = logit(0.25),
                 fruitPerPlant = 30)
 
@@ -108,10 +108,7 @@ pheno <- pheno %>%
   rename_with(.fn = \(n) str_replace(n, "\\.logit\\.prob", "\\.prob")) %>%
   mutate(germinated = rbinom(n(), size=1, prob=germination.prob),
          established = ifelse(germinated, rbinom(n(), size=1, prob=establishment.prob), NA),
-         beta, 
-         alpha, 
          k = ifelse(established, k, NA), #can only have a growth rate if you establish
-         delta = ifelse(established, delta, NA),
          y1surv = ifelse(established, rbinom(n(), size =1, prob=y1surv.prob), NA),
          flowered = ifelse(established, rbinom(n(), size = 1, prob = flowering.prob), NA),
          fruitPerPlant = ifelse(flowered, fruitPerPlant, NA))
@@ -175,12 +172,12 @@ pheno_weekly <- pheno %>%
   mutate(week=row_number(), #12 weeks for each indiv
          week_next=lead(week, order_by = week), 
          elapsed_weeks= week_next - week, #interval length in weeks
-         size = if_else(week==1, beta, #size in week 1 is the min size (beta)
+         size = if_else(week==1, 7, #size in week 1 is the min size (beta)
                         weibull(t = week, #otherwise use the weibull formula to calculate size
-                        alpha = alpha,
-                        beta = beta,
+                        alpha = 40,
+                        beta = 7,
                         k = k, 
-                        delta = delta)))
+                        delta = 0.5)))
 pheno_weekly
 ```
 
@@ -200,6 +197,6 @@ pheno_weekly_merged <- pheno_weekly %>%
 pheno_weekly_merged %>% 
 select(Indiv_ID, week, size, week_next, germination.logit_geno, germination.logit_pheno)
 
-write_csv(pheno_weekly_merged, "../output/PopSim_Phenos-Genos_v1.csv")
+write_csv(pheno_weekly_merged, "../output/PopSim_Phenos-Genos_v2.csv")
 ```
 
