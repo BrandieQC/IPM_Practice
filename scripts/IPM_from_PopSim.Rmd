@@ -513,3 +513,42 @@ Pc_genos %>% as_tibble() %>%
   coord_equal() + #make it a square plot 
   theme_bw()
 ```
+## Asymptotic Lambda Comparison
+```{r}
+(lam_pheno = Re(eigen(Pc_phenos)$values[1]))  #0.9889141
+(lam_geno = Re(eigen(Pc_genos)$values[1]))  #0.9097057
+#lambda slightly lower with genotypes added 
+#both just below 1 (population growth)
+```
+
+## Sensitivities Comparison
+```{r}
+#prep:
+w.eigen_pheno <- Re(eigen(Pc_phenos)$vectors[,1]) #right eigenvector
+stable.dist_pheno <- w.eigen_pheno/sum(w.eigen_pheno)
+v.eigen_pheno <- Re(eigen(t(Pc_phenos))$vectors[,1]) #left eigenvector 
+repro.val_pheno <- v.eigen_pheno/v.eigen_pheno[1]
+
+w.eigen_geno <- Re(eigen(Pc_genos)$vectors[,1]) #right eigenvector
+stable.dist_geno <- w.eigen_geno/sum(w.eigen_geno)
+v.eigen_geno <- Re(eigen(t(Pc_genos))$vectors[,1]) #left eigenvector 
+repro.val_geno <- v.eigen_geno/v.eigen_geno[1]
+
+#combine eigens to get sensitivity and elasticity matrices
+v.dot.w_pheno = sum(stable.dist_pheno*repro.val_pheno)*h
+sens_pheno = outer(repro.val_pheno,stable.dist_pheno)/v.dot.w_pheno
+elas_pheno = matrix(as.vector(sens_pheno)*as.vector(Pc_phenos)/lam_pheno,nrow=n)
+
+v.dot.w_geno = sum(stable.dist_geno*repro.val_geno)*h
+sens_geno = outer(repro.val_geno,stable.dist_geno)/v.dot.w_geno
+elas_geno = matrix(as.vector(sens_geno)*as.vector(Pc_genos)/lam_geno,nrow=n)
+
+sens_pheno
+sens_geno
+#sensitivities are different 
+
+elas_pheno
+elas_geno 
+#elasticities are different 
+```
+
