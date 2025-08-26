@@ -75,6 +75,7 @@ simpop_timeprep %>% #look at data for a few indivs to see if above worked
 
 simpop_timeprep_surv <- simpop_timeprep %>% drop_na(surv, size) #for surv models 
 simpop_timeprep_size <- simpop_timeprep %>% drop_na(size, size_next) #for size models 
+simpop_timeprep %>% filter(is.na(flowering.prob))
 ```
 
 ### Scaling and transformations
@@ -513,7 +514,8 @@ Pc_genos %>% as_tibble() %>%
   coord_equal() + #make it a square plot 
   theme_bw()
 ```
-## Asymptotic Lambda Comparison
+
+### Asymptotic Lambda Comparison
 ```{r}
 (lam_pheno = Re(eigen(Pc_phenos)$values[1]))  #0.9889141
 (lam_geno = Re(eigen(Pc_genos)$values[1]))  #0.9097057
@@ -521,7 +523,7 @@ Pc_genos %>% as_tibble() %>%
 #both just below 1 (population growth)
 ```
 
-## Sensitivities Comparison
+### Sensitivities Comparison
 ```{r}
 #prep:
 w.eigen_pheno <- Re(eigen(Pc_phenos)$vectors[,1]) #right eigenvector
@@ -552,3 +554,476 @@ elas_geno
 #elasticities are different 
 ```
 
+## Fecundity Constants
+
+```{r}
+fec2 <- 14 #Number of seeds produced per fruit - estimated from F1 crosses data sheet 
+
+fec3 <- 0.001336 #Probability of germination within the year of seed production
+
+fec4 <- 0.14 #Probability of seedling survival from the time of germination to the time of the next annual census t+1, corresponding to approximately 6 months
+```
+
+## Flowering Probability Models
+
+### Prep dataframe 
+```{r}
+twomossize <- simpop_timeprep %>% 
+  filter(week==9) %>% 
+  select(Indiv_ID, size, flowered, flowering.logit_geno, fruitPerPlant_pheno, fruitPerPlant_geno) %>% 
+  drop_na(size)
+head(twomossize)
+```
+
+### Phenos Only
+```{r}
+fec0.models_pheno <- tribble(
+  ~name,          ~f,
+  "1_linear_size",      "flowered ~ 1 + size", 
+  "2_quadratic_size",   "flowered ~ size + I(size^2)", 
+  "3_cubic_size",       "flowered ~ size + I(size^2) + I(size^3)"
+)
+
+#run the models 
+fec0.models_pheno <- fec0.models_pheno %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), 
+                            data = twomossize, 
+                            family = "binomial")), #run the models 
+         predict = map(glm, predict, type = "response"), 
+         glance = map(glm, tidy),
+         AIC = map(glm, AIC),
+         BIC = map(glm, BIC)) #glance at the model results
+
+fec0.models_pheno %>% select(-f, -glm, -predict) %>% unnest(BIC) %>% arrange(BIC) #look at the model fitting info 
+fec0.models_pheno %>% select(-f, -glm, -predict) %>% unnest(AIC) %>% arrange(AIC) #look at the model fitting info 
+
+#1_linear_size best by AIC and BIC
+```
+
+```{r}
+fec0.model.final_pheno <- fec0.models_pheno %>% filter(name == "1_linear_size") %>% pull(glm) %>% magrittr::extract2(1)
+summary(fec0.model.final_pheno)
+```
+
+#### Predicted vs. Observed
+```{r}
+twomossize %>% 
+  mutate(pred_fixef = predict(fec0.model.final_pheno, newdata = ., type="response", re.form = NA)) %>% 
+  ggplot(aes(x = size, y = flowered)) +
+  geom_point(alpha=.2) +
+  geom_line(aes(y = pred_fixef), 
+            color = "blue", 
+            size = 1.2, alpha=0.3) 
+```
+
+### Phenos + Genos
+```{r}
+fec0.models_genos <- tribble(
+  ~name,          ~f,
+  "1a_linear_size",      "flowered ~ 1 + size", 
+  "2a_quadratic_size",   "flowered ~ size + I(size^2)", 
+  "3a_cubic_size",       "flowered ~ size + I(size^2) + I(size^3)",
+  "1b_linear_size_genos",      "flowered ~ 1 + size + flowering.logit_geno", 
+  "2b_quadratic_size_genos",   "flowered ~ size + I(size^2) + flowering.logit_geno", 
+  "3b_cubic_size_genos",       "flowered ~ size + I(size^2) + I(size^3) + flowering.logit_geno"
+)
+
+#run the models 
+fec0.models_genos <- fec0.models_genos %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), 
+                            data = twomossize, 
+                            family = "binomial")), #run the models 
+         predict = map(glm, predict, type = "response"), 
+         glance = map(glm, tidy),
+         AIC = map(glm, AIC),
+         BIC = map(glm, BIC)) #glance at the model results
+
+fec0.models_genos %>% select(-f, -glm, -predict) %>% unnest(BIC) %>% arrange(BIC) #look at the model fitting info 
+fec0.models_genos %>% select(-f, -glm, -predict) %>% unnest(AIC) %>% arrange(AIC) #look at the model fitting info 
+
+#1a_linear_size best by AIC and BIC
+#1b_linear_size_genos second best by BIC, 3rd best by AIC 
+```
+
+```{r}
+fec0.model.final_genos <- fec0.models_genos %>% filter(name == "1b_linear_size_genos") %>% pull(glm) %>% magrittr::extract2(1)
+summary(fec0.model.final_genos)
+```
+
+#### Predicted vs. Observed
+```{r}
+twomossize %>% 
+  mutate(pred_fixef = predict(fec0.model.final_genos, newdata = ., type="response", re.form = NA)) %>% 
+  ggplot(aes(x = size, y = flowered)) +
+  geom_point(alpha=.2) +
+  geom_line(aes(y = pred_fixef), 
+            color = "blue", 
+            size = 1.2, alpha=0.3) 
+```
+## Number Fruits/Plant Models
+Filter to only reproductive plants 
+```{r}
+twomossize_fruits <- twomossize %>% 
+  drop_na(fruitPerPlant_pheno)
+head(twomossize_fruits)
+summary(twomossize_fruits)
+```
+
+### Observed Patterns - check if poisson distribution appropriate 
+```{r}
+twomossize_fruits %>% 
+  ggplot(aes(x=fruitPerPlant_pheno)) +
+  geom_histogram()
+#no poisson?
+```
+
+### Phenos Only
+```{r}
+fruits_models_pheno <- tribble(
+  ~name,          ~f,
+  "1_linear_size",      "fruitPerPlant_pheno ~ 1 + size", 
+  "2_quadratic_size",   "fruitPerPlant_pheno ~ size + I(size^2)", 
+  "3_cubic_size",       "fruitPerPlant_pheno ~ size + I(size^2) + I(size^3)"
+)
+
+#run the models 
+fruits_models_pheno <- fruits_models_pheno %>%
+  mutate(lm = map(f, ~ lm(as.formula(.), 
+                            data = twomossize_fruits)), #run the models 
+         predict = map(lm, predict), 
+         glance = map(lm, glance)) #glance at the model results
+
+fruits_models_pheno %>% select(-f, -lm, -predict) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
+fruits_models_pheno %>% select(-f, -lm, -predict) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 
+
+#1_linear_size best by AIC and BIC 
+```
+
+```{r}
+fruits.final_pheno <- fruits_models_pheno %>% filter(name == "1_linear_size") %>% pull(lm) %>% magrittr::extract2(1)
+summary(fruits.final_pheno)
+```
+
+#### Predicted vs. Observed
+```{r}
+twomossize_fruits %>% 
+  cbind(predicted={fruits_models_pheno %>% filter(name=="1_linear_size") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=size, y = fruitPerPlant_pheno)) +
+  geom_point(alpha=.2) +
+  geom_line(aes(y = predicted), 
+            color = "blue", size=1.2, alpha=0.3)
+```
+
+### Phenos + Genos
+```{r}
+fruits_models_genos <- tribble(
+  ~name,          ~f,
+  "1a_linear_size",      "fruitPerPlant_pheno ~ 1 + size", 
+  "2a_quadratic_size",   "fruitPerPlant_pheno ~ size + I(size^2)", 
+  "3a_cubic_size",       "fruitPerPlant_pheno ~ size + I(size^2) + I(size^3)",
+  "1b_linear_size_genos",      "fruitPerPlant_pheno ~ 1 + size + fruitPerPlant_geno", 
+  "2b_quadratic_size_genos",   "fruitPerPlant_pheno ~ size + I(size^2) + fruitPerPlant_geno", 
+  "3b_cubic_size_genos",       "fruitPerPlant_pheno ~ size + I(size^2) + I(size^3) + fruitPerPlant_geno"
+)
+
+#run the models 
+fruits_models_genos <- fruits_models_genos %>%
+  mutate(lm = map(f, ~ lm(as.formula(.), 
+                            data = twomossize_fruits)), #run the models 
+         predict = map(lm, predict), 
+         glance = map(lm, glance)) #glance at the model results
+
+fruits_models_genos %>% select(-f, -lm, -predict) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
+fruits_models_genos %>% select(-f, -lm, -predict) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 
+
+#1b_linear_size_genos best by AIC and BIC 
+```
+
+```{r}
+fruits.final_genos <- fruits_models_genos %>% filter(name == "1b_linear_size_genos") %>% pull(lm) %>% magrittr::extract2(1)
+summary(fruits.final_genos)
+```
+
+#### Predicted vs. Observed
+```{r}
+twomossize_fruits %>% 
+  cbind(predicted={fruits_models_genos %>% filter(name=="1b_linear_size_genos") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=size, y = fruitPerPlant_pheno)) +
+  geom_point(alpha=.2) +
+  geom_line(aes(y = predicted), 
+            color = "blue", size=1.2, alpha=0.3)
+```
+
+## F Matrix 
+
+### Make a dataframe to store the parameters
+```{r}
+params.rep = data.frame(
+  flower.int=NA, # Intercept from log reg of flowering prob 
+  flower.slope = NA, # Slope from log reg of flowering prob 
+  fruit.int=NA, # Intercept from Poisson regression of fruit number
+  fruit.slope=NA, # Slope from Poisson regression of fruit number
+  seed.per.fruit=fec2, #seeds produced per fruit
+  germ.prob=fec3, #germ prob 
+  establishment.prob=fec4, # Probability of establishment
+  recruit.size.mean=NA, # Mean recruit size
+  recruit.size.sd=NA # Standard deviation of recruit size
+)
+
+#recruit size = size in week 1 (pre-transplant )
+recruit_size <- simpop_timeprep %>% 
+  filter(week==1) %>% 
+  summarise(recruit.size.mean=mean(size, na.rm=TRUE), recruit.size.sd=sd(size, na.rm = TRUE))
+params.rep$recruit.size.mean <- recruit_size$recruit.size.mean
+params.rep$recruit.size.sd <- recruit_size$recruit.size.sd
+
+#make separate dataframe for phenos vs. genos 
+params.rep_phenos <- params.rep
+params.rep_genos <- params.rep
+```
+
+### Extract the model params 
+```{r}
+fec0.coefs_pheno <- fec0.models_pheno %>% 
+  filter(name == "1_linear_size") %>% 
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params.rep_phenos$flower.int <- fec0.coefs_pheno %>% filter(term == "(Intercept)") %>% pull(estimate)
+params.rep_phenos$flower.slope <- fec0.coefs_pheno %>% filter(term == "size") %>% pull(estimate)
+```
+
+```{r}
+fec0.coefs_genos <- fec0.models_genos %>% 
+  filter(name == "1b_linear_size_genos") %>% 
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params.rep_genos$flower.int <- fec0.coefs_genos %>% filter(term == "(Intercept)") %>% pull(estimate)
+params.rep_genos$flower.slope <- fec0.coefs_genos %>% filter(term == "size") %>% pull(estimate)
+```
+
+```{r}
+fruits.coefs_pheno <- fruits_models_pheno %>% 
+  filter(name == "1_linear_size") %>% 
+  mutate(coefs = map(lm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params.rep_phenos$fruit.int <- fruits.coefs_pheno %>% filter(term == "(Intercept)") %>% pull(estimate)
+params.rep_phenos$fruit.slope <- fruits.coefs_pheno %>% filter(term == "size") %>%  pull(estimate) 
+```
+
+```{r}
+fruits.coefs_genos <- fruits_models_genos %>% 
+  filter(name == "1b_linear_size_genos") %>% 
+  mutate(coefs = map(lm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params.rep_genos$fruit.int <- fruits.coefs_genos %>% filter(term == "(Intercept)") %>% pull(estimate)
+params.rep_genos$fruit.slope <- fruits.coefs_genos %>% filter(term == "size") %>%  pull(estimate) 
+```
+
+### Define the functions
+```{r}
+# flowering prob. function 
+p.flower.x_pheno=function(x,params.rep_phenos) { #flowering prob. 
+              u=exp(params.rep_phenos$flower.int+params.rep_phenos$flower.slope*x)
+              return(u/(1+u)) #back transform from logit scale 
+}
+
+#fruit number function
+fruit.n_pheno <- function(x, params.rep_phenos) {
+  exp(params.rep_phenos$fruit.int + 
+        x*params.rep_phenos$fruit.slope) #fecundity, exp to backtransform poisson 
+}
+
+#reproduction function (with above prob. and fruit functions incorporated)
+f.yx_pheno=function(xp,x,params.rep_phenos) {
+  #fresh seeds:
+  p.flower.x_pheno(x,params.rep_phenos)* #have to flower first
+    fruit.n_pheno(x, params.rep_phenos)* #then produce a certain number of fruits 
+    params.rep_phenos$seed.per.fruit* #those fruits have a certain number of seeds 
+    params.rep_phenos$germ.prob* #those seeds have to germinate
+              params.rep_phenos$establishment.prob* #recruits have to surv post germ
+              dnorm(xp,mean=params.rep_phenos$recruit.size.mean,sd=params.rep_phenos$recruit.size.sd) 
+}
+```
+
+```{r}
+# flowering prob. function 
+p.flower.x_genos=function(x,params.rep_genos) { #flowering prob. 
+              u=exp(params.rep_genos$flower.int+params.rep_genos$flower.slope*x)
+              return(u/(1+u)) #back transform from logit scale 
+}
+
+#fruit number function
+fruit.n_genos <- function(x, params.rep_genos) {
+  exp(params.rep_genos$fruit.int + 
+        x*params.rep_genos$fruit.slope) #fecundity, exp to backtransform poisson 
+}
+
+#reproduction function (with above prob. and fruit functions incorporated)
+f.yx_genos=function(xp,x,params.rep_genos) {
+  #fresh seeds:
+  p.flower.x_genos(x,params.rep_genos)* #have to flower first
+    fruit.n_genos(x, params.rep_genos)* #then produce a certain number of fruits 
+    params.rep_genos$seed.per.fruit* #those fruits have a certain number of seeds 
+    params.rep_genos$germ.prob* #those seeds have to germinate
+              params.rep_genos$establishment.prob* #recruits have to surv post germ
+              dnorm(xp,mean=params.rep_genos$recruit.size.mean,sd=params.rep_genos$recruit.size.sd) 
+}
+```
+
+### Make the F matrix
+```{r}
+F_phenos=h*outer(y,y,f.yx_pheno,params=params.rep_phenos) # reproduction matrix
+
+F_genos=h*outer(y,y,f.yx_genos,params=params.rep_genos) # reproduction matrix
+```
+
+### Plot the F matrix 
+```{r}
+F_phenos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "F Matrix: Phenos Only") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+```{r}
+F_genos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "F Matrix: Phenos + Genos") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+### Asymptotic Lambda Comparison
+```{r}
+(lam_pheno = Re(eigen(F_phenos)$values[1]))  #2361860582
+(lam_geno = Re(eigen(F_genos)$values[1]))  #5.237653e-06
+#lambda lower with genotypes added 
+#phenos --> pop growth; genos --> pop decline 
+```
+
+### Sensitivities Comparison
+```{r}
+#prep:
+w.eigen_pheno <- Re(eigen(F_phenos)$vectors[,1]) #right eigenvector
+stable.dist_pheno <- w.eigen_pheno/sum(w.eigen_pheno)
+v.eigen_pheno <- Re(eigen(t(F_phenos))$vectors[,1]) #left eigenvector 
+repro.val_pheno <- v.eigen_pheno/v.eigen_pheno[1]
+
+w.eigen_geno <- Re(eigen(F_genos)$vectors[,1]) #right eigenvector
+stable.dist_geno <- w.eigen_geno/sum(w.eigen_geno)
+v.eigen_geno <- Re(eigen(t(F_genos))$vectors[,1]) #left eigenvector 
+repro.val_geno <- v.eigen_geno/v.eigen_geno[1]
+
+#combine eigens to get sensitivity and elasticity matrices
+v.dot.w_pheno = sum(stable.dist_pheno*repro.val_pheno)*h
+sens_pheno = outer(repro.val_pheno,stable.dist_pheno)/v.dot.w_pheno
+elas_pheno = matrix(as.vector(sens_pheno)*as.vector(F_phenos)/lam_pheno,nrow=n)
+
+v.dot.w_geno = sum(stable.dist_geno*repro.val_geno)*h
+sens_geno = outer(repro.val_geno,stable.dist_geno)/v.dot.w_geno
+elas_geno = matrix(as.vector(sens_geno)*as.vector(F_genos)/lam_geno,nrow=n)
+
+sens_pheno
+sens_geno
+#sensitivities are different 
+
+elas_pheno
+elas_geno 
+#elasticities are different 
+```
+
+## Combine P and F matrices to make the IPM (K Matrix)
+```{r}
+K_pheno=P_phenos + F_phenos                             # full matrix 
+K_genos=P_genos + F_genos                             # full matrix 
+```
+
+### Plot the matrix
+```{r}
+K_pheno %>% as_tibble() %>%
+   set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "IPM: Phenos Only") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+```{r}
+K_genos %>% as_tibble() %>%
+   set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "IPM: Phenos + Genos") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+
+### Asymptotic Lambda Comparison
+```{r}
+(lam_pheno = Re(eigen(K_pheno)$values[1]))  #2361860584
+(lam_geno = Re(eigen(K_genos)$values[1]))  #0.9097059
+#lambda lower with genotypes added 
+#phenos --> pop growth; genos --> pop decline 
+```
+
+### Sensitivities Comparison
+```{r}
+#prep:
+w.eigen_pheno <- Re(eigen(K_pheno)$vectors[,1]) #right eigenvector
+stable.dist_pheno <- w.eigen_pheno/sum(w.eigen_pheno)
+v.eigen_pheno <- Re(eigen(t(K_pheno))$vectors[,1]) #left eigenvector 
+repro.val_pheno <- v.eigen_pheno/v.eigen_pheno[1]
+
+w.eigen_geno <- Re(eigen(K_genos)$vectors[,1]) #right eigenvector
+stable.dist_geno <- w.eigen_geno/sum(w.eigen_geno)
+v.eigen_geno <- Re(eigen(t(K_genos))$vectors[,1]) #left eigenvector 
+repro.val_geno <- v.eigen_geno/v.eigen_geno[1]
+
+#combine eigens to get sensitivity and elasticity matrices
+v.dot.w_pheno = sum(stable.dist_pheno*repro.val_pheno)*h
+sens_pheno = outer(repro.val_pheno,stable.dist_pheno)/v.dot.w_pheno
+elas_pheno = matrix(as.vector(sens_pheno)*as.vector(K_pheno)/lam_pheno,nrow=n)
+
+v.dot.w_geno = sum(stable.dist_geno*repro.val_geno)*h
+sens_geno = outer(repro.val_geno,stable.dist_geno)/v.dot.w_geno
+elas_geno = matrix(as.vector(sens_geno)*as.vector(K_genos)/lam_geno,nrow=n)
+
+sens_pheno
+sens_geno
+#sensitivities are different 
+
+elas_pheno
+elas_geno 
+#elasticities are different 
+```
