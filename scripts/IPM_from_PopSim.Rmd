@@ -126,11 +126,11 @@ surv.models_pheno <- surv.models_pheno %>%
 
 surv.models_pheno %>% select(-f, -glm, -predict) %>% unnest(BIC) %>% arrange(BIC) #look at the model fitting info 
 surv.models_pheno %>% select(-f, -glm, -predict) %>% unnest(AIC) %>% arrange(AIC) #look at the model fitting info 
-#3a_quadratic size best by AIC and BIC
+#3b_quadratic_size_weeks best by AIC and BIC
 ```
 
 ```{r}
-survival.model.final_pheno <- surv.models_pheno %>% filter(name == "3a_quadratic_size") %>% pull(glm) %>% magrittr::extract2(1)
+survival.model.final_pheno <- surv.models_pheno %>% filter(name == "3b_quadratic_size_weeks") %>% pull(glm) %>% magrittr::extract2(1)
 summary(survival.model.final_pheno)
 ```
 
@@ -173,8 +173,8 @@ surv.models_genos <- surv.models_genos %>%
 
 surv.models_genos %>% select(-f, -glm, -predict) %>% unnest(BIC) %>% arrange(BIC) #look at the model fitting info 
 surv.models_genos %>% select(-f, -glm, -predict) %>% unnest(AIC) %>% arrange(AIC) #look at the model fitting info 
-#3a_quadratic_size best by BIC
-#3c_quadratic_size_weeks_geno best by AIC 
+#3b_quadratic_size_weeks best by AIC and BIC
+#3c_quadratic_size_weeks_geno 3rd best by AIC 
 ```
 
 ```{r}
@@ -305,7 +305,7 @@ params_genos <- params
 ### Use broom:tidy to create a df with the coef from each model
 ```{r}
 surv.coefs_pheno <- surv.models_pheno %>% 
-  filter(name == "3a_quadratic_size") %>%
+  filter(name == "3b_quadratic_size_weeks") %>%
   mutate(coefs = map(glm, tidy)) %>% 
   select(name, f, coefs) %>% 
   unnest(coefs) 
@@ -317,7 +317,7 @@ params_phenos$surv.slope2 <- surv.coefs_pheno %>% filter(term == "I(size^2)") %>
 
 ```{r}
 surv.coefs_genos <- surv.models_genos %>% 
-  filter(name == "3c_quadratic_size_weeks_geno") %>%
+  filter(name == "3c_quadratic_size_weeks_geno") %>% 
   mutate(coefs = map(glm, tidy)) %>% 
   select(name, f, coefs) %>% 
   unnest(coefs) 
@@ -520,8 +520,8 @@ Pc_genos %>% as_tibble() %>%
 
 ### Asymptotic Lambda Comparison
 ```{r}
-(lam_pheno = Re(eigen(Pc_phenos)$values[1]))  #0.9889141
-(lam_geno = Re(eigen(Pc_genos)$values[1]))  #0.9097057
+(lam_pheno = Re(eigen(Pc_phenos)$values[1]))  #0.9760204
+(lam_geno = Re(eigen(Pc_genos)$values[1]))  #0.9630443
 #lambda slightly lower with genotypes added 
 #both just below 1 (population growth)
 ```
@@ -995,7 +995,7 @@ K_genos %>% as_tibble() %>%
 ### Asymptotic Lambda Comparison
 ```{r}
 (lam_pheno = Re(eigen(K_pheno)$values[1]))  #2361860584
-(lam_geno = Re(eigen(K_genos)$values[1]))  #0.9097059
+(lam_geno = Re(eigen(K_genos)$values[1]))  #0.9866669
 #lambda lower with genotypes added 
 #phenos --> pop growth; genos --> pop decline 
 ```
