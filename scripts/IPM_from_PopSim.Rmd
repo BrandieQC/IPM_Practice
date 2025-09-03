@@ -45,19 +45,22 @@ names(simpop)
 ```{r}
 unique(simpop$established) #NA = did not germinate, 1 = established (survived first 3 weeks in field); 0 = did not establish
 unique(simpop$y1surv) #NA = did not establish, 1 = survived to week 12; 0 = did not survive 
-#simpop %>% select(Indiv_ID, germinated, established, y1surv, k_pheno, week, size) %>% filter(Indiv_ID<5)
 
 simpop_timeprep <- simpop %>%
   mutate(weeks = as.numeric(week - 1), #Weeks since week 1 (equivalent to pre-transplant or initial size) 
-         size = if_else(germinated==0, NA, size) #no size if no germ
+         size = if_else(germinated==0, NA, size), #no size if no germ
+         weekly.surv.prob = if_else(is.na(y1surv), NA,
+                                    if_else(y1surv==0, 0,  
+                                            y1surv.prob^(1/(8)))) #get weekly surv prob post establishment
          ) %>%   
-  group_by(Indiv_ID) %>% 
   mutate(surv=if_else(germinated==0, NA, #surv = NA if you did not germ 
                         if_else(week==1, 1, #if you did germinate, assume you survived to week 1 (equivalent to pre-transplant size time point)
                                 if_else(established==0, 0, #surv = 0 after week 1 if you did not establish 
                                         if_else(week<5, 1, #if you did establish, your surv is equal to 1 for the first 3 weeks post-transplant 
-                                                y1surv) #your survival for weeks 5-12 is then equal to your y1surv
+                                                rbinom(n(), size = 1, prob = weekly.surv.prob)) #your survival for weeks 5-12 is then based on weekly surv prob
                                         )))) %>% 
+  group_by(Indiv_ID) %>% 
+  mutate(surv = cummin(surv)) %>% # if dead in a previous week, stay dead
   mutate(death.week=if_else(y1surv==1, NA, #if survive year 1 no death week 
                             first(week, order_by = surv)) #first week where surv = 0 
            ) %>% 
