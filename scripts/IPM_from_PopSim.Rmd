@@ -17,6 +17,13 @@ knitr::opts_chunk$set(echo = TRUE)
 
 **Goal:** Compare IPM created from just phenotypes from the simulation to an IPM created from phenotypes + genotype scores.
 
+To Do:
+
+-   Re-simulate the population with a different random seed to see if that changes the differences between the pheno vs pheno+geno IPMs
+
+-   Would changing the heritability have an effect on diffs between IPMs?
+
+
 ## Libraries
 
 ```{r}
