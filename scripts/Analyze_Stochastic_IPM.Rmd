@@ -1,0 +1,40 @@
+---
+title: "Analyze_Stochastic_IPM"
+author: "Julin Maloof and Brandie QC"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+```{r}
+library(tidyverse)
+library(patchwork)
+library(here)
+```
+
+## Load the stochastic model summaries 
+```{r}
+sim.summary <- readRDS(here("output", "simpop_summary_100sims_100gen_2025-10-14.Rds")) 
+head(sim.summary)
+```
+
+## Plots
+```{r, fig.height=7, fig.width=9}
+sim.summary %>%
+  pivot_longer(-c(sim, gen, Indiv_ID), names_to = "trait", values_to = "value") %>%
+  ggplot(aes(x=gen, y=value)) +
+  geom_line(alpha=.05, aes(group=sim)) +
+  geom_smooth(se = FALSE) +
+  facet_wrap(~trait, scales="free_y")
+```
+
+```{r}
+sim.summary %>%
+  ggplot(aes(x=gen, y=popSize)) +
+  geom_line(alpha=.1, aes(group=sim)) +
+  geom_smooth(se = FALSE)
+```
