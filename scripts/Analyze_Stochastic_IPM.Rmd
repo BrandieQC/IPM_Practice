@@ -18,7 +18,7 @@ library(here)
 
 ## Load the stochastic model summaries 
 ```{r}
-sim.summary <- readRDS(here("output", "simpop_summary_100sims_100gen_2025-10-14.Rds")) 
+sim.summary <- readRDS(here("output", "simpop_summary_100sims_100gen_2025-10-16.Rds")) 
 head(sim.summary)
 ```
 
@@ -30,6 +30,8 @@ sim.summary %>%
   geom_line(alpha=.05, aes(group=sim)) +
   geom_smooth(se = FALSE) +
   facet_wrap(~trait, scales="free_y")
+
+#no indiv ID
 ```
 
 ```{r}
