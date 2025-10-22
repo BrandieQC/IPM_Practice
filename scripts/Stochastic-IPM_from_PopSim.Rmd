@@ -549,22 +549,24 @@ calc_generations <- function(startingPop, ngenerations = 10, seedPerFruit = 4, s
   if (summarize) {
     tmp.pop <- startingPop
     
-    sim_summary <- map(1:ngenerations, \(gen) {
+    sim_summary <- map(1:ngenerations, \(gen) { #\(gen) = anonymous function
       tmp.seed <- calc_geno(tmp.pop, seedPerFruit = seedPerFruit)
       tmp.pop <<- calc_pheno(tmp.seed) # double arrow updates the global tmp.pop
-      if (nrow(tmp.pop) == 0) {
+      if (nrow(tmp.pop) == 0) { #if no seed, just return pop size = 0 
         return(tibble(popSize = 0))
       }
-      tmp.pop %>%
+      tmp.pop %>% #if there are seeds, then summarize 
         summarize(
-          popSize = sum(y1surv, na.rm = TRUE),
+          popSize = sum(y1surv, na.rm = TRUE), #pop size = # of plants that survived 
+          startingSeedNum = n(), #starting pop size (i.e. number of seed)
           across(
-            c(germinated, established, y1surv, size, flowered, fruitPerPlant_pheno),
+            c(germinated, established, y1surv, size, flowered, fruitPerPlant_pheno), 
+            #can also get a summary (means or stdev) of the genotypic value columns 
             \(x) mean(x, na.rm = TRUE)
           )
         )
-    }) %>% list_rbind(names_to = "gen")
-  } else {
+    }) %>% list_rbind(names_to = "gen") #combines the 10 individual dataframes created above into one and assign them a generation number 
+  } else { #if you don't summarize, then...
     generations <- tibble(gen = 1:ngenerations, seed = list(NULL), pop = list(NULL))
     
     generations$seed[[1]] <- calc_geno(startingPop, seedPerFruit = seedPerFruit)
@@ -601,7 +603,8 @@ ngenerations <- 100
 
 future::plan(future::multisession, workers = 6) # for laptop...
 
-# 80 minutes on laptop
+# forgot to note how long this took to run on my laptop
+## Started around 12pm, output file saved at 6:52am the next day ~=18 hours??
 system.time({
   sim_summary <- future_map_dfr(1:nsims, \(sim) calc_generations(startingPop = simpop, ngenerations = ngenerations),
                                 .id = "sim",
